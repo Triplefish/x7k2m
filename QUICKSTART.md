@@ -24,7 +24,7 @@
 3. 左侧菜单选择「开发者配置」
 4. 点击「创建 Token」
 5. 给 Token 起个名字（如：基金追踪工具）
-6. 点击创建，**复制并保存**这个 Token（很重要！只显示一次）
+6. 点击创建，**复制并保存**这个 Token（很重要！只显示一次
 
 ### 步骤 4：获取数据表 ID
 
@@ -34,7 +34,7 @@
    https://vika.cn/workbench/dstXXXXXXXXXX/viwYYYYYYYYYY
    ```
 3. 复制 `dst` 后面到下一个 `/` 之前的部分（dstXXXXXXXXXX）
-4. 这就是你的数据表 ID，**保存下来：Mu1n5UVusylzZfT**
+4. 这就是你的数据表 ID，**保存下来**
 
 ---
 

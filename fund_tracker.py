@@ -20,7 +20,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 配置信息（优先从环境变量读取，其次从 .env 文件读取）
 VIKA_API_TOKEN = os.environ.get("VIKA_API_TOKEN", "").strip()
 VIKA_DATASHEET_ID = os.environ.get("VIKA_DATASHEET_ID", "").strip()
-VIKA_API_BASE = "https://aitable.vika.cn/fusion/v1"
+VIKA_API_BASE = "https://vika.cn/fusion/v1"
 
 # 基金配置
 FUNDS = [
@@ -306,12 +306,9 @@ def calculate_fund_estimate(fund):
 
 
 def update_vika_table(records):
-    """使用 REST API 直接更新维格表"""
+    """使用 REST API 智能更新维格表 (Upsert: 有则更新，无则新增，多则删除)"""
     if not VIKA_API_TOKEN or not VIKA_DATASHEET_ID:
         print("❌ 缺少维格表配置信息")
-        print(f"   VIKA_API_TOKEN: {'✅' if VIKA_API_TOKEN else '❌ 未设置'}")
-        print(f"   VIKA_DATASHEET_ID: {'✅' if VIKA_DATASHEET_ID else '❌ 未设置'}")
-        print("\n   请确保在 GitHub Secrets 中配置了这两个值，或本地 .env 文件中设置了它们")
         return False
     
     try:
@@ -320,33 +317,105 @@ def update_vika_table(records):
             "Content-Type": "application/json"
         }
         
-        # 先获取所有现有记录的ID（用于删除）
-        print("\n🗑️  清空旧数据...")
+        # 1. 获取现有所有数据（建立索引）
+        print("\n🔍 检查现有记录...")
         list_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
-        response = requests.get(list_url, headers=headers, timeout=10)
+        params = {"pageSize": 1000} 
+        response = requests.get(list_url, headers=headers, params=params, timeout=10, verify=False)
+        
+        # 避免QPS限制
+        import time
+        time.sleep(0.5)
+
+        existing_map = {} # 格式: { "002963": ["rec1", "rec2"], ... }
         
         if response.status_code == 200:
             data = response.json()
             if data.get('data') and data['data'].get('records'):
-                # 删除所有旧记录
-                for record in data['data']['records']:
-                    delete_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records/{record['recordId']}"
-                    requests.delete(delete_url, headers=headers)
+                for rec in data['data']['records']:
+                    rid = rec['recordId']
+                    # 获取基金代码，注意这里如果列名没对上，code会是None
+                    f_code = rec['fields'].get('基金代码')
+                    
+                    if f_code:
+                        if f_code not in existing_map:
+                            existing_map[f_code] = []
+                        existing_map[f_code].append(rid)
+                    else:
+                        # 可能是脏数据（比如之前没填进去的空行）
+                        if "unknown" not in existing_map:
+                            existing_map["unknown"] = []
+                        existing_map["unknown"].append(rid)
+
+        # 2. 分类操作：需要更新的、需要新增的、需要删除的
+        to_create = []
+        to_update = []
+        to_delete = []
         
-        # 插入新数据
-        print("📝 插入新数据...")
-        create_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
+        # 记录本次涉及到的 有效 recordIds
+        processed_fund_codes = set()
         
+        # 先把所有未知的（脏数据）加入删除列表
+        if "unknown" in existing_map:
+            to_delete.extend(existing_map["unknown"])
+
         for record in records:
-            payload = {
-                "fields": record
-            }
-            response = requests.post(create_url, json=payload, headers=headers, timeout=10)
+            code = record['基金代码']
+            processed_fund_codes.add(code)
             
-            if response.status_code not in [200, 201]:
-                print(f"⚠️  插入失败: {response.text}")
+            if code in existing_map and existing_map[code]:
+                # 存在：更新第一条
+                target_id = existing_map[code][0]
+                to_update.append({
+                    "recordId": target_id,
+                    "fields": record
+                })
+                # 如果有重复的（同一个代码多条记录），把剩下的加入删除列表
+                if len(existing_map[code]) > 1:
+                    to_delete.extend(existing_map[code][1:])
+            else:
+                # 不存在：新增
+                to_create.append({
+                    "fields": record
+                })
+
+        # 3. 删除不在本次列表里的其他过时数据
+        for code, rids in existing_map.items():
+            if code != "unknown" and code not in processed_fund_codes:
+                to_delete.extend(rids)
         
-        print(f"✅ 成功更新 {len(records)} 条记录到维格表")
+        # 4. 执行操作
+        # 4.1 批量删除
+        if to_delete:
+            print(f"🗑️  清理 {len(to_delete)} 条重复或脏数据...")
+            for i in range(0, len(to_delete), 10):
+                batch = to_delete[i:i+10]
+                ids_str = ",".join(batch)
+                del_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records?recordIds={ids_str}"
+                requests.delete(del_url, headers=headers, verify=False)
+                time.sleep(0.5)
+
+        # 4.2 批量更新
+        if to_update:
+            print(f"🔄 更新 {len(to_update)} 条现有数据...")
+            patch_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
+            for i in range(0, len(to_update), 10):
+                batch = to_update[i:i+10]
+                payload = {"records": batch}
+                requests.patch(patch_url, json=payload, headers=headers, verify=False)
+                time.sleep(0.5)
+
+        # 4.3 批量新增
+        if to_create:
+            print(f"📝 新增 {len(to_create)} 条新数据...")
+            create_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
+            for i in range(0, len(to_create), 10):
+                batch = to_create[i:i+10]
+                payload = {"records": batch}
+                requests.post(create_url, json=payload, headers=headers, verify=False)
+                time.sleep(0.5)
+
+        print(f"✅ 同步完成：更新{len(to_update)} / 新增{len(to_create)} / 清理{len(to_delete)}")
         return True
         
     except Exception as e:
