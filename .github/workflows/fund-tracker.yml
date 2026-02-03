@@ -32,6 +32,10 @@ jobs:
         VIKA_API_TOKEN: ${{ secrets.VIKA_API_TOKEN }}
         VIKA_DATASHEET_ID: ${{ secrets.VIKA_DATASHEET_ID }}
       run: |
+        echo "调试：检查环境变量..."
+        if [ -z "$VIKA_API_TOKEN" ]; then echo "❌ VIKA_API_TOKEN 未设置"; else echo "✅ VIKA_API_TOKEN 已设置"; fi
+        if [ -z "$VIKA_DATASHEET_ID" ]; then echo "❌ VIKA_DATASHEET_ID 未设置"; else echo "✅ VIKA_DATASHEET_ID 已设置"; fi
+        echo ""
         python fund_tracker.py
     
     - name: 显示完成信息

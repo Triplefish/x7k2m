@@ -11,15 +11,15 @@ from datetime import datetime
 import urllib3
 from dotenv import load_dotenv
 
-# 加载 .env 文件
-load_dotenv()
+# 加载 .env 文件（本地开发使用，GitHub Actions 不需要）
+load_dotenv(verbose=False)
 
 # 禁用 SSL 警告（仅用于解决某些网络环境的证书问题）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 配置信息
-VIKA_API_TOKEN = os.environ.get("VIKA_API_TOKEN")
-VIKA_DATASHEET_ID = os.environ.get("VIKA_DATASHEET_ID")
+# 配置信息（优先从环境变量读取，其次从 .env 文件读取）
+VIKA_API_TOKEN = os.environ.get("VIKA_API_TOKEN", "").strip()
+VIKA_DATASHEET_ID = os.environ.get("VIKA_DATASHEET_ID", "").strip()
 VIKA_API_BASE = "https://aitable.vika.cn/fusion/v1"
 
 # 基金配置
@@ -309,6 +309,9 @@ def update_vika_table(records):
     """使用 REST API 直接更新维格表"""
     if not VIKA_API_TOKEN or not VIKA_DATASHEET_ID:
         print("❌ 缺少维格表配置信息")
+        print(f"   VIKA_API_TOKEN: {'✅' if VIKA_API_TOKEN else '❌ 未设置'}")
+        print(f"   VIKA_DATASHEET_ID: {'✅' if VIKA_DATASHEET_ID else '❌ 未设置'}")
+        print("\n   请确保在 GitHub Secrets 中配置了这两个值，或本地 .env 文件中设置了它们")
         return False
     
     try:
