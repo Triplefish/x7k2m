@@ -8,8 +8,11 @@ import requests
 import json
 import pandas as pd
 from datetime import datetime
-from vika import Vika
 import urllib3
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 # 禁用 SSL 警告（仅用于解决某些网络环境的证书问题）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -17,6 +20,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 配置信息
 VIKA_API_TOKEN = os.environ.get("VIKA_API_TOKEN")
 VIKA_DATASHEET_ID = os.environ.get("VIKA_DATASHEET_ID")
+VIKA_API_BASE = "https://aitable.vika.cn/fusion/v1"
 
 # 基金配置
 FUNDS = [
@@ -302,26 +306,42 @@ def calculate_fund_estimate(fund):
 
 
 def update_vika_table(records):
-    """更新维格表数据"""
+    """使用 REST API 直接更新维格表"""
     if not VIKA_API_TOKEN or not VIKA_DATASHEET_ID:
         print("❌ 缺少维格表配置信息")
         return False
     
     try:
-        vika = Vika(VIKA_API_TOKEN)
-        datasheet = vika.datasheet(VIKA_DATASHEET_ID)
+        headers = {
+            "Authorization": f"Bearer {VIKA_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
         
-        # 清空现有数据
+        # 先获取所有现有记录的ID（用于删除）
         print("\n🗑️  清空旧数据...")
-        all_records = datasheet.records.all()
-        if all_records:
-            for record in all_records:
-                datasheet.records.delete(record.record_id)
+        list_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
+        response = requests.get(list_url, headers=headers, timeout=10)
         
-        # 批量插入新数据
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('data') and data['data'].get('records'):
+                # 删除所有旧记录
+                for record in data['data']['records']:
+                    delete_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records/{record['recordId']}"
+                    requests.delete(delete_url, headers=headers)
+        
+        # 插入新数据
         print("📝 插入新数据...")
+        create_url = f"{VIKA_API_BASE}/datasheets/{VIKA_DATASHEET_ID}/records"
+        
         for record in records:
-            datasheet.records.create(record)
+            payload = {
+                "fields": record
+            }
+            response = requests.post(create_url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code not in [200, 201]:
+                print(f"⚠️  插入失败: {response.text}")
         
         print(f"✅ 成功更新 {len(records)} 条记录到维格表")
         return True
