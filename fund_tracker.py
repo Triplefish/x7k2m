@@ -62,13 +62,14 @@ FUNDS = [
         "etf_code": "588000",
         "etf_name": "科创50ETF"
     },
-    {
-        "name": "汇添富科技领先混合C",
-        "code": "025881",
-        "type": "active",
-        "index_code": "000688",  # 科创50指数
-        "index_name": "科创50"
-    }
+    # 暂时注释：新基金，天天基金网暂无估值数据
+    # {
+    #     "name": "汇添富科技领先混合C",
+    #     "code": "025881",
+    #     "type": "active",
+    #     "index_code": "000688",  # 科创50指数
+    #     "index_name": "科创50"
+    # }
 ]
 
 
@@ -83,9 +84,18 @@ def get_fund_realtime_data(fund_code):
         response = requests.get(url, timeout=10)
         
         if response.status_code == 200 and response.text:
+            # 检查返回内容是否有效
+            if 'jsonpgz(' not in response.text and '(' not in response.text:
+                print(f"⚠️  基金 {fund_code} 返回内容异常，可能是无效代码")
+                return {'success': False, 'error': '基金代码可能无效'}
+            
             # 解析返回的 JavaScript 数据
-            json_str = response.text.split('(')[1].split(')')[0]
-            data = json.loads(json_str)
+            try:
+                json_str = response.text.split('(')[1].split(')')[0]
+                data = json.loads(json_str)
+            except (IndexError, json.JSONDecodeError) as e:
+                print(f"⚠️  基金 {fund_code} 数据解析失败: {response.text[:100]}")
+                return {'success': False, 'error': '数据格式错误'}
             
             fund_name = data['name']              # 基金名称
             latest_nav = float(data['dwjz'])      # 昨日净值
@@ -143,7 +153,7 @@ def calculate_by_etf_price(fund, latest_nav):
     try:
         # 尝试多个数据源
         # 1. 东方财富
-        url = f"http://push2.eastmoney.com/api/qt/stock/get?secid=1.{etf_code}&fields=f43,f44,f45,f46,f170"
+        url = f"http://push2.eastmoney.com/api/qt/stock/get?secid=1.{etf_code}&fields=f43,f44,f45,f46,f60,f170"
         response = requests.get(url, timeout=5)
         
         if response.status_code == 200:
@@ -152,7 +162,57 @@ def calculate_by_etf_price(fund, latest_nav):
                 current_price = data['data'].get('f43')  # 当前价
                 yesterday_close = data['data'].get('f60')  # 昨收
                 
-           估值信息
+                if current_price and yesterday_close:
+                    current_price = float(current_price) / 1000
+                    yesterday_close = float(yesterday_close) / 1000
+                    change_pct = (current_price - yesterday_close) / yesterday_close * 100
+                    
+                    estimated_nav = latest_nav * (1 + change_pct / 100)
+                    
+                    return {
+                        'estimate_nav': estimated_nav,
+                        'change_pct': change_pct,
+                        'change_amount': estimated_nav - latest_nav,
+                        'data_source': 'ETF价格计算',
+                        'note': f'基于{fund["etf_name"]}估算'
+                    }
+    except Exception as e:
+        pass
+    
+    return None
+
+
+def get_fund_basic_info(fund_code):
+    """
+    获取基金基础信息（昨日净值）
+    用于完全的备用方案
+    """
+    try:
+        url = f"http://fundgz.1234567.com.cn/js/{fund_code}.js"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200 and response.text:
+            try:
+                json_str = response.text.split('(')[1].split(')')[0]
+                data = json.loads(json_str)
+                
+                return {
+                    'fund_name': data['name'],
+                    'latest_nav': float(data['dwjz']),
+                    'nav_date': data.get('jzrq', ''),
+                    'success': True
+                }
+            except (IndexError, json.JSONDecodeError, KeyError):
+                pass
+    except Exception:
+        pass
+    
+    return {'success': False}
+
+
+def calculate_fund_estimate(fund):
+    """
+    获取单个基金的估值信息
     策略：
     1. 优先尝试天天基金网（如果还能用）
     2. 如果失败，ETF联接基金用ETF价格计算
@@ -239,53 +299,6 @@ def calculate_by_etf_price(fund, latest_nav):
         "数据来源": "昨日净值",
         "备注": "暂无实时数据"
     }
-    print(f"\n📊 处理基金: {fund_name} ({fund_code})")
-    
-    # 获取天天基金网的实时数据
-    data = get_fund_realtime_data(fund_code)
-    
-    if not data['success']:
-        print(f"❌ 无法获取基金数据，跳过")
-        return None
-    
-    # 准备返回的数据
-    result = {
-        "基金名称": data['fund_name'],
-        "基金代码": fund_code,
-        "昨日净值": f"{data['latest_nav']:.4f}",
-        "估算净值": f"{data['estimate_nav']:.4f}",
-        "估算涨跌": f"{data['change_pct']:+.2f}%",
-        "估算增长": f"{data['change_amount']:+.4f}",
-        "更新时间": data['estimate_time'],
-        "数据来源": "天天基金网"
-    }
-    
-    # 根据基金类型添加额外信息
-    if fund_type == "etf_linked":
-        etf_name = fund.get('etf_name', '')
-        etf_code = fund.get('etf_code', '')
-        result["基金类型"] = "ETF联接"
-        result["追踪标的"] = f"{etf_name}({etf_code})" if etf_name else "ETF"
-        result["准确度"] = "高"
-    elif fund_type == "active":
-        index_name = fund.get('index_name', '')
-        result["基金类型"] = "主动型"
-        result["参考指数"] = index_name
-        result["准确度"] = "官方估值"
-    elif fund_type == "bond":
-        result["基金类型"] = "债券型"
-        result["准确度"] = "官方估值"
-    
-    # 添加备注
-    if 'note' in data:
-        result["备注"] = data['note']
-    
-    print(f"   昨日净值: {data['latest_nav']:.4f}")
-    print(f"   估算净值: {data['estimate_nav']:.4f}")
-    print(f"   估算涨跌: {data['change_pct']:+.2f}%")
-    print(f"   更新时间: {data['estimate_time']}")
-    
-    return result
 
 
 def update_vika_table(records):
@@ -341,8 +354,8 @@ def main():
     for i, result in enumerate(results, 1):
         print(f"\n{i}. {result['基金名称']}")
         print(f"   昨日净值: {result['昨日净值']}")
-        print(f"   估算涨跌: {result['估算涨跌']}")
-        print(f"   估算净值: {result['估算净值']}")
+        print(f"   涨跌幅: {result['涨跌幅']}")
+        print(f"   当前估值: {result['当前估值']}")
     
     # 更新到维格表
     if results:
