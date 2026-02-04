@@ -102,7 +102,7 @@ def test_sina_backup():
                     print(f"✅ {etf['name']} ({etf['code']})")
                     print(f"   当前价格: {current_price:.3f}")
                     print(f"   昨日收盘: {yesterday_close:.3f}")
-                    print(f"   涨跌幅: {change_pct:+.2f}%")
+                    print(f"   涨跌幅: {change_pct/100:.4f}")
                     print()
                 else:
                     print(f"⚠️  {etf['name']} - 数据格式异常")
