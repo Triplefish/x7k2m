@@ -24,56 +24,80 @@ VIKA_API_BASE = "https://vika.cn/fusion/v1"
 
 # 基金配置
 FUNDS = [
+    # 理财通基金
     {
         "name": "易方达黄金ETF联接C",
         "code": "002963",
         "type": "etf_linked",
         "etf_code": "159934",
-        "etf_name": "黄金ETF"
+        "etf_name": "黄金ETF",
+        "source": "理财通"
     },
     {
         "name": "汇添富有色金属ETF",
         "code": "019165",
         "type": "etf_linked",
         "etf_code": "512400",
-        "etf_name": "有色金属ETF"
+        "etf_name": "有色金属ETF",
+        "source": "理财通"
     },
     {
         "name": "南方信息创新混合A",
         "code": "007490",
         "type": "active",
         "index_code": "399006",  # 创业板指
-        "index_name": "创业板指"
+        "index_name": "创业板指",
+        "source": "理财通"
     },
     {
         "name": "国联安半导体ETF联接A",
         "code": "007300",
         "type": "etf_linked",
         "etf_code": "512480",
-        "etf_name": "半导体ETF"
+        "etf_name": "半导体ETF",
+        "source": "理财通"
     },
     {
         "name": "博时转债增强债券A",
         "code": "050019",
         "type": "bond",
         "index_code": "000832",  # 中证转债
-        "index_name": "中证转债"
+        "index_name": "中证转债",
+        "source": "理财通"
     },
     {
         "name": "易方达科创50ETF联接C",
         "code": "013305",
         "type": "etf_linked",
         "etf_code": "588000",
-        "etf_name": "科创50ETF"
+        "etf_name": "科创50ETF",
+        "source": "理财通"
     },
-    # 暂时注释：新基金，天天基金网暂无估值数据
-    # {
-    #     "name": "汇添富科技领先混合C",
-    #     "code": "025881",
-    #     "type": "active",
-    #     "index_code": "000688",  # 科创50指数
-    #     "index_name": "科创50"
-    # }
+    # 支付宝基金
+    {
+        "name": "国寿安保尊享债券A",
+        "code": "000668",
+        "type": "bond",
+        "source": "支付宝"
+    },
+    {
+        "name": "富国稳健添息债券C",
+        "code": "019584",
+        "type": "bond",
+        "source": "支付宝"
+    },
+    {
+        "name": "汇添富鑫享添利六个月持有期混合A",
+        "code": "012951",
+        "type": "bond",
+        "source": "支付宝"
+    },
+    {
+        "name": "上银慧享利30天滚动持有中短债债券A",
+        "code": "015942",
+        "type": "bond",
+        "source": "支付宝"
+    },
 ]
 
 
@@ -225,8 +249,9 @@ def calculate_fund_estimate(fund):
     fund_code = fund['code']
     fund_name = fund['name']
     fund_type = fund['type']
+    fund_source = fund.get('source', '未知')  # 获取来源
     
-    print(f"\n📊 处理基金: {fund_name} ({fund_code})")
+    print(f"\n📊 处理基金: {fund_name} ({fund_code}) - 来源: {fund_source}")
     
     # 方案1：天天基金网（可能随时失效）
     data = get_fund_realtime_data(fund_code)
@@ -236,6 +261,7 @@ def calculate_fund_estimate(fund):
         result = {
             "基金名称": data['fund_name'],
             "基金代码": fund_code,
+            "来源": fund_source,
             "昨日净值": f"{data['latest_nav']:.4f}",
             "当前估值": f"{data['estimate_nav']:.4f}",
             "涨跌幅": f"{data['change_pct']:+.2f}%",
@@ -279,6 +305,7 @@ def calculate_fund_estimate(fund):
             return {
                 "基金名称": basic_info['fund_name'],
                 "基金代码": fund_code,
+                "来源": fund_source,
                 "类型": f"ETF联接-{fund.get('etf_name', '')}",
                 "昨日净值": f"{latest_nav:.4f}",
                 "当前估值": f"{backup_data['estimate_nav']:.4f}",
@@ -294,6 +321,7 @@ def calculate_fund_estimate(fund):
     return {
         "基金名称": basic_info['fund_name'],
         "基金代码": fund_code,
+        "来源": fund_source,
         "类型": fund_type,
         "昨日净值": f"{latest_nav:.4f}",
         "当前估值": f"{latest_nav:.4f}",
