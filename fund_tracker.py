@@ -22,83 +22,110 @@ VIKA_API_TOKEN = os.environ.get("VIKA_API_TOKEN", "").strip()
 VIKA_DATASHEET_ID = os.environ.get("VIKA_DATASHEET_ID", "").strip()
 VIKA_API_BASE = "https://vika.cn/fusion/v1"
 
-# 基金配置
-FUNDS = [
-    # 理财通基金
-    {
-        "name": "易方达黄金ETF联接C",
-        "code": "002963",
-        "type": "etf_linked",
-        "etf_code": "159934",
-        "etf_name": "黄金ETF",
-        "source": "理财通"
-    },
-    {
-        "name": "汇添富有色金属ETF",
-        "code": "019165",
-        "type": "etf_linked",
-        "etf_code": "512400",
-        "etf_name": "有色金属ETF",
-        "source": "理财通"
-    },
-    {
-        "name": "南方信息创新混合A",
-        "code": "007490",
-        "type": "active",
-        "index_code": "399006",  # 创业板指
-        "index_name": "创业板指",
-        "source": "理财通"
-    },
-    {
-        "name": "国联安半导体ETF联接A",
-        "code": "007300",
-        "type": "etf_linked",
-        "etf_code": "512480",
-        "etf_name": "半导体ETF",
-        "source": "理财通"
-    },
-    {
-        "name": "博时转债增强债券A",
-        "code": "050019",
-        "type": "bond",
-        "index_code": "000832",  # 中证转债
-        "index_name": "中证转债",
-        "source": "理财通"
-    },
-    {
-        "name": "易方达科创50ETF联接C",
-        "code": "013305",
-        "type": "etf_linked",
-        "etf_code": "588000",
-        "etf_name": "科创50ETF",
-        "source": "理财通"
-    },
-    # 支付宝基金
-    {
-        "name": "国寿安保尊享债券A",
-        "code": "000668",
-        "type": "bond",
-        "source": "支付宝"
-    },
-    {
-        "name": "富国稳健添息债券C",
-        "code": "019584",
-        "type": "bond",
-        "source": "支付宝"
-    },
-    {
-        "name": "汇添富鑫享添利六个月持有期混合A",
-        "code": "012951",
-        "type": "bond",
-        "source": "支付宝"
-    },
-    {
-        "name": "上银慧享利30天滚动持有中短债债券A",
-        "code": "015942",
-        "type": "bond",
-        "source": "支付宝"
-    },
-]
+# 基金数据文件路径
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'funds.json')
+
+def load_funds():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Failed to load funds: {e}")
+            return []
+    return []
+
+def save_funds(funds):
+    try:
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(funds, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"Failed to save funds: {e}")
+        return False
+
+# 初始化配置
+FUNDS = load_funds()
+if not FUNDS:
+    # Fallback default if file doesn't exist or is empty
+    FUNDS = [
+        # 理财通基金
+        {
+            "name": "易方达黄金ETF联接C",
+            "code": "002963",
+            "type": "etf_linked",
+            "etf_code": "159934",
+            "etf_name": "黄金ETF",
+            "source": "理财通"
+        },
+        {
+            "name": "汇添富有色金属ETF",
+            "code": "019165",
+            "type": "etf_linked",
+            "etf_code": "512400",
+            "etf_name": "有色金属ETF",
+            "source": "理财通"
+        },
+        {
+            "name": "南方信息创新混合A",
+            "code": "007490",
+            "type": "active",
+            "index_code": "399006",
+            "index_name": "创业板指",
+            "source": "理财通"
+        },
+        {
+            "name": "国联安半导体ETF联接A",
+            "code": "007300",
+            "type": "etf_linked",
+            "etf_code": "512480",
+            "etf_name": "半导体ETF",
+            "source": "理财通"
+        },
+        {
+            "name": "博时转债增强债券A",
+            "code": "050019",
+            "type": "bond",
+            "index_code": "000832",
+            "index_name": "中证转债",
+            "source": "理财通"
+        },
+        {
+            "name": "易方达科创50ETF联接C",
+            "code": "013305",
+            "type": "etf_linked",
+            "etf_code": "588000",
+            "etf_name": "科创50ETF",
+            "source": "理财通"
+        },
+        # 支付宝基金
+        {
+            "name": "国寿安保尊享债券A",
+            "code": "000668",
+            "type": "bond",
+            "source": "支付宝"
+        },
+        {
+            "name": "富国稳健添息债券C",
+            "code": "019584",
+            "type": "bond",
+            "source": "支付宝"
+        },
+        {
+            "name": "汇添富鑫享添利六个月持有期混合A",
+            "code": "012951",
+            "type": "bond",
+            "source": "支付宝"
+        },
+        {
+            "name": "上银慧享利30天滚动持有中短债债券A",
+            "code": "015942",
+            "type": "bond",
+            "source": "支付宝"
+        },
+    ]
+    # save_funds(FUNDS) # Optional: create file if missing
 
 
 def get_fund_realtime_data(fund_code):

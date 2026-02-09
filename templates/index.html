@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fund Tracker</title>
+    
+    <!-- Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#10b981',
+                        danger: '#ef4444',
+                        background: '#f8fafc',
+                        surface: '#ffffff'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Icons ---
+        const IconTrendingUp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>;
+        const IconTrendingDown = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg>;
+        const IconRefresh = ({ spin }) => <svg className={spin ? "animate-spin" : ""} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
+        const IconCloud = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>;
+        const IconPlus = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const IconTrash = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+
+        // --- Components ---
+
+        const StatCard = ({ label, value, subValue, trend }) => {
+            const colorClass = trend > 0 ? 'text-red-500' : (trend < 0 ? 'text-emerald-500' : 'text-gray-500');
+            const bgClass = trend > 0 ? 'bg-red-50' : (trend < 0 ? 'bg-emerald-50' : 'bg-gray-50');
+            
+            return (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
+                    <span className="text-gray-400 text-xs uppercase tracking-wider font-semibold mb-1">{label}</span>
+                    <span className={`text-2xl font-bold ${colorClass}`}>{value}</span>
+                    {subValue && <span className="text-xs text-gray-400 mt-1">{subValue}</span>}
+                </div>
+            );
+        };
+
+        const FundRow = ({ fund, onDelete }) => {
+            const isUp = parseFloat(fund['涨跌幅']) > 0;
+            const isDown = parseFloat(fund['涨跌幅']) < 0;
+            const trendColor = isUp ? 'text-red-500' : (isDown ? 'text-emerald-500' : 'text-gray-500');
+            const diffSign = isUp ? '+' : '';
+            
+            return (
+                <div className="group bg-white rounded-xl p-4 mb-3 border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 flex flex-wrap items-center gap-4 fade-in">
+                    <div className="flex-1 min-w-[200px]">
+                        <div className="flex items-center gap-2">
+                             <h3 className="font-bold text-gray-800">{fund['基金名称']}</h3>
+                             <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{fund['基金代码']}</span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1 flex gap-2">
+                            <span>{fund['来源']}</span>
+                            <span>•</span>
+                            <span>{fund['类型']}</span>
+                            <span>•</span>
+                            <span>{fund['更新时间']}</span>
+                        </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-end min-w-[100px]">
+                        <span className="text-xs text-gray-400">当前估值</span>
+                        <span className="font-mono font-medium text-gray-700">{fund['当前估值']}</span>
+                    </div>
+
+                    <div className="flex flex-col items-end min-w-[100px]">
+                        <span className="text-xs text-gray-400">涨跌幅</span>
+                        <div className={`flex items-center gap-1 font-bold ${trendColor}`}>
+                            {isUp && <IconTrendingUp />}
+                            {isDown && <IconTrendingDown />}
+                            <span>{diffSign}{(parseFloat(fund['涨跌幅']) * 100).toFixed(2)}%</span>
+                        </div>
+                    </div>
+                     <div className="flex flex-col items-end min-w-[100px]">
+                        <span className="text-xs text-gray-400">预估盈亏</span>
+                        <span className={`font-mono text-sm ${trendColor}`}>{fund['涨跌额']}</span>
+                    </div>
+
+                    <div className="">
+                        <button 
+                            onClick={() => onDelete(fund['基金代码'])}
+                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                            title="删除"
+                        >
+                            <IconTrash />
+                        </button>
+                    </div>
+                </div>
+            )
+        }
+
+        const Modal = ({ isOpen, onClose, title, children, footer }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm transition-opacity">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                            <h3 className="font-bold text-lg text-gray-800">{title}</h3>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
+                        </div>
+                        <div className="p-6">
+                            {children}
+                        </div>
+                        {footer && (
+                            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
+                                {footer}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )
+        }
+
+        const AddFundForm = ({ onClose, onRefresh }) => {
+            const [code, setCode] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [fundInfo, setFundInfo] = useState(null);
+            
+            // Form state
+            const [formData, setFormData] = useState({
+                type: 'active',
+                source: '理财通',
+                etf_code: '',
+                etf_name: ''
+            });
+
+            const handleSearch = async () => {
+                if (!code) return;
+                setLoading(true);
+                try {
+                    const res = await fetch(`/api/fund_info/${code}`);
+                    const data = await res.json();
+                    if (data.success) {
+                        setFundInfo(data);
+                        // Auto-detect hint
+                        if (data.fund_name.includes('ETF联接')) {
+                            setFormData(prev => ({ ...prev, type: 'etf_linked' }));
+                        } else if (data.fund_name.includes('债')) {
+                            setFormData(prev => ({ ...prev, type: 'bond' }));
+                        }
+                    } else {
+                        alert('未找到该基金信息');
+                        setFundInfo(null);
+                    }
+                } catch (e) {
+                    alert('查询出错');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSubmit = async () => {
+                if (!fundInfo) return;
+                
+                try {
+                    const payload = {
+                        code: code,
+                        name: fundInfo.fund_name,
+                        source: formData.source,
+                        type: formData.type,
+                        etf_code: formData.type === 'etf_linked' ? formData.etf_code : undefined,
+                        etf_name: formData.type === 'etf_linked' ? formData.etf_name : undefined,
+                    };
+
+                    const res = await fetch('/api/funds', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        onRefresh();
+                        onClose();
+                    } else {
+                        alert(data.message || '添加失败');
+                    }
+                } catch(e) {
+                    alert('网络错误');
+                }
+            };
+
+            return (
+                <div className="space-y-4">
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                            placeholder="输入基金代码 (如: 002963)"
+                            value={code}
+                            onChange={e => setCode(e.target.value)}
+                        />
+                        <button 
+                            onClick={handleSearch}
+                            disabled={loading || !code}
+                            className="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors"
+                        >
+                            {loading ? '...' : '查询'}
+                        </button>
+                    </div>
+
+                    {fundInfo && (
+                        <div className="space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium block mb-1">基金名称</label>
+                                <div className="font-semibold text-gray-800">{fundInfo.fund_name}</div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-gray-500 font-medium block mb-1">来源</label>
+                                    <select 
+                                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                                        value={formData.source}
+                                        onChange={e => setFormData({...formData, source: e.target.value})}
+                                    >
+                                        <option value="理财通">理财通</option>
+                                        <option value="支付宝">支付宝</option>
+                                        <option value="其他">其他</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500 font-medium block mb-1">类型</label>
+                                    <select 
+                                        className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                                        value={formData.type}
+                                        onChange={e => setFormData({...formData, type: e.target.value})}
+                                    >
+                                        <option value="active">主动型/混合</option>
+                                        <option value="bond">债券型</option>
+                                        <option value="etf_linked">ETF联接</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {formData.type === 'etf_linked' && (
+                                <div className="space-y-2 pt-2 border-t border-gray-200">
+                                    <input 
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                        placeholder="关联ETF代码 (选填)"
+                                        value={formData.etf_code}
+                                        onChange={e => setFormData({...formData, etf_code: e.target.value})}
+                                    />
+                                    <input 
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                        placeholder="关联ETF名称 (选填)"
+                                        value={formData.etf_name}
+                                        onChange={e => setFormData({...formData, etf_name: e.target.value})}
+                                    />
+                                </div>
+                            )}
+
+                            <button 
+                                onClick={handleSubmit}
+                                className="w-full bg-primary text-white py-2 rounded-lg hover:bg-emerald-600 font-medium shadow-sm shadow-emerald-200 transition-all mt-2"
+                            >
+                                确认添加
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [syncing, setSyncing] = useState(false);
+            const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const res = await fetch('/api/estimates');
+                    const json = await res.json();
+                    setData(json);
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSync = async () => {
+                if(!confirm('确认同步到维格表?')) return;
+                setSyncing(true);
+                try {
+                    const res = await fetch('/api/sync', { method: 'POST' });
+                    const json = await res.json();
+                    if(json.success) alert('同步成功');
+                    else alert('同步失败: ' + json.message);
+                } catch (e) {
+                    alert('同步错误');
+                } finally {
+                    setSyncing(false);
+                }
+            };
+
+            const handleDelete = async (code) => {
+                if(!confirm(`确认删除代码为 ${code} 的基金?`)) return;
+                try {
+                    await fetch(`/api/funds/${code}`, { method: 'DELETE' });
+                    loadData();
+                } catch(e) {
+                    alert('删除失败');
+                }
+            };
+
+            useEffect(() => {
+                loadData();
+            }, []);
+
+            // Dashboard Stats
+            const stats = useMemo(() => {
+                if(!data.length) return { avgChange: 0, upCount: 0, downCount: 0 };
+                let totalPct = 0;
+                let up = 0;
+                let down = 0;
+                let validCount = 0;
+                
+                data.forEach(d => {
+                    // Try to parse number, but keep string for display if needed
+                    // d['涨跌幅'] is "0.0123" (string) usually
+                    const pct = parseFloat(d['涨跌幅']);
+                    if(!isNaN(pct)) {
+                        totalPct += pct;
+                        if(pct > 0) up++; 
+                        if(pct < 0) down++;
+                        validCount++;
+                    }
+                });
+                return {
+                    avgChange: validCount ? (totalPct / validCount * 100).toFixed(2) : 0,
+                    upCount: up,
+                    downCount: down
+                };
+            }, [data]);
+
+            return (
+                <div className="min-h-screen pb-12">
+                    {/* Header */}
+                    <div className="bg-white border-b border-gray-200 sticky top-0 z-30 bg-opacity-80 backdrop-blur-md">
+                        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                                    <IconTrendingUp />
+                                </div>
+                                <div>
+                                    <h1 className="font-bold text-xl text-gray-900 tracking-tight">基金追踪</h1>
+                                    <p className="text-xs text-gray-400">实时估值看板</p>
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={loadData} 
+                                    className="p-2 text-gray-500 hover:text-primary hover:bg-gray-50 rounded-lg transition-all"
+                                    title="刷新"
+                                >
+                                    <IconRefresh spin={loading} />
+                                </button>
+                                <button 
+                                    onClick={handleSync}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium transition-colors"
+                                    disabled={syncing}
+                                >
+                                    <IconCloud />
+                                    {syncing ? '同步中...' : '同步'}
+                                </button>
+                                <button 
+                                    onClick={() => setIsAddModalOpen(true)}
+                                    className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium shadow-lg shadow-gray-200 transition-all transform hover:-translate-y-0.5"
+                                >
+                                    <IconPlus />
+                                    添加
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="max-w-4xl mx-auto px-4 py-8">
+                        
+                        {/* Stats Row */}
+                        <div className="grid grid-cols-3 gap-4 mb-8">
+                            <StatCard 
+                                label="平均涨跌" 
+                                value={`${stats.avgChange > 0 ? '+' : ''}${stats.avgChange}%`} 
+                                trend={parseFloat(stats.avgChange)}
+                            />
+                            <StatCard 
+                                label="上涨基金" 
+                                value={stats.upCount} 
+                                subValue="支"
+                                trend={1}
+                            />
+                            <StatCard 
+                                label="下跌基金" 
+                                value={stats.downCount} 
+                                subValue="支"
+                                trend={-1}
+                            />
+                        </div>
+
+                        {/* List */}
+                        <div className="space-y-1">
+                            {loading && data.length === 0 ? (
+                                <div className="text-center py-12 text-gray-400">加载中...</div>
+                            ) : data.length > 0 ? (
+                                data.map(fund => (
+                                    <FundRow key={fund['基金代码']} fund={fund} onDelete={handleDelete} />
+                                ))
+                            ) : (
+                                <div className="text-center py-12">
+                                    <div className="bg-white w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+                                        <span className="text-2xl">📭</span>
+                                    </div>
+                                    <h3 className="text-gray-900 font-medium">暂无关注基金</h3>
+                                    <p className="text-gray-400 text-sm mt-1">点击右上角添加按钮开始追踪。</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Modals */}
+                    <Modal 
+                        isOpen={isAddModalOpen} 
+                        onClose={() => setIsAddModalOpen(false)}
+                        title="添加新基金"
+                    >
+                        <AddFundForm 
+                            onClose={() => setIsAddModalOpen(false)} 
+                            onRefresh={loadData}
+                        />
+                    </Modal>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
