@@ -109,4 +109,4 @@ def sync_vika():
         return jsonify({'success': False, 'message': '同步失败，请检查日志'})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=8888)
