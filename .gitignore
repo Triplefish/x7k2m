@@ -45,3 +45,7 @@ htmlcov/
 # 临时文件
 *.tmp
 *.bak
+
+# 脱敏
+.bat
+.md
