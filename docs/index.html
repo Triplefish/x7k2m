@@ -125,7 +125,7 @@
                 
                 for (const fund of funds) {
                     try {
-                        const response = await fetch(`http://fundgz.1234567.com.cn/js/${fund.code}.js`);
+                        const response = await fetch(`https://fundgz.1234567.com.cn/js/${fund.code}.js`);
                         const text = await response.text();
                         
                         if (text && text.includes('(')) {
