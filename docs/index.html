@@ -99,10 +99,17 @@
             const [data, setData] = useState([]);
             const [loading, setLoading] = useState(false);
 
-            // 从 GitHub raw 读取基金列表
+            // 根据 URL ?u=user1 / ?u=user2 选择基金列表
+            const USER_FUND_MAP = {
+                'user1': 'funds.json',
+                'user2': 'funds_user2.json',
+            };
+            const urlUser = new URLSearchParams(window.location.search).get('u') || 'user1';
+            const fundFile = USER_FUND_MAP[urlUser] || 'funds.json';
+
             const loadFunds = async () => {
                 try {
-                    const response = await fetch('https://raw.githubusercontent.com/yux38/fund-tracker/main/data/funds.json');
+                    const response = await fetch(`https://raw.githubusercontent.com/Triplefish/x7k2m/main/data/${fundFile}`);
                     const funds = await response.json();
                     setFundList(funds);
                     return funds;

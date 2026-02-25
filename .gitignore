@@ -47,5 +47,5 @@ htmlcov/
 *.bak
 
 # 脱敏
-.bat
-.md
+*.bat
+*.md
