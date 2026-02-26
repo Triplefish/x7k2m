@@ -40,6 +40,13 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        // 当前用户（user1 或 user2）
+        const CURRENT_USER = 'user1';
+        const API_USER = `?user=${CURRENT_USER}`;
+
+        // 风险评级顺序（用于排序）
+        const RISK_ORDER = { 'R1 低风险': 1, 'R2 中低风险': 2, 'R3 中等风险': 3, 'R4 中高风险': 4, 'R5 高风险': 5 };
+
         // --- Icons ---
         const IconTrendingUp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>;
         const IconTrendingDown = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg>;
@@ -48,7 +55,22 @@
         const IconPlus = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const IconTrash = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
 
-        // --- Components ---
+        const IconSort = ({ dir }) => <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{dir === 'asc' ? <polyline points="18 15 12 9 6 15"/> : <polyline points="6 9 12 15 18 9"/>}</svg>;
+
+        // --- Risk Badge ---
+        const RiskBadge = ({ level }) => {
+            if (!level || level === '未知') return <span className="text-xs text-gray-300">—</span>;
+            const colorMap = {
+                'R1': 'bg-emerald-50 text-emerald-600 border-emerald-200',
+                'R2': 'bg-blue-50 text-blue-600 border-blue-200',
+                'R3': 'bg-yellow-50 text-yellow-600 border-yellow-200',
+                'R4': 'bg-orange-50 text-orange-600 border-orange-200',
+                'R5': 'bg-red-50 text-red-600 border-red-200',
+            };
+            const key = level.startsWith('R') ? level.substring(0, 2) : 'R3';
+            const cls = colorMap[key] || 'bg-gray-50 text-gray-600 border-gray-200';
+            return <span className={`text-xs border px-1.5 py-0.5 rounded font-mono ${cls}`}>{level}</span>;
+        };
 
         const StatCard = ({ label, value, subValue, trend }) => {
             const colorClass = trend > 0 ? 'text-red-500' : (trend < 0 ? 'text-emerald-500' : 'text-gray-500');
@@ -75,6 +97,7 @@
                         <div className="flex items-center gap-2">
                              <h3 className="font-bold text-gray-800">{fund['基金名称']}</h3>
                              <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{fund['基金代码']}</span>
+                             <RiskBadge level={fund['风险评级']} />
                         </div>
                         <div className="text-xs text-gray-400 mt-1 flex gap-2">
                             <span>{fund['来源']}</span>
@@ -148,7 +171,8 @@
                 type: 'active',
                 source: '理财通',
                 etf_code: '',
-                etf_name: ''
+                etf_name: '',
+                risk_level: ''
             });
 
             const handleSearch = async () => {
@@ -159,12 +183,9 @@
                     const data = await res.json();
                     if (data.success) {
                         setFundInfo(data);
-                        // Auto-detect hint
-                        if (data.fund_name.includes('ETF联接')) {
-                            setFormData(prev => ({ ...prev, type: 'etf_linked' }));
-                        } else if (data.fund_name.includes('债')) {
-                            setFormData(prev => ({ ...prev, type: 'bond' }));
-                        }
+                        const newType = data.fund_name.includes('ETF联接') ? 'etf_linked'
+                            : data.fund_name.includes('债') ? 'bond' : 'active';
+                        setFormData(prev => ({ ...prev, type: newType, risk_level: data.risk_level || '' }));
                     } else {
                         alert('未找到该基金信息');
                         setFundInfo(null);
@@ -185,11 +206,12 @@
                         name: fundInfo.fund_name,
                         source: formData.source,
                         type: formData.type,
+                        risk_level: formData.risk_level || undefined,
                         etf_code: formData.type === 'etf_linked' ? formData.etf_code : undefined,
                         etf_name: formData.type === 'etf_linked' ? formData.etf_name : undefined,
                     };
 
-                    const res = await fetch('/api/funds', {
+                    const res = await fetch(`/api/funds${API_USER}`, {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(payload)
@@ -215,6 +237,7 @@
                             placeholder="输入基金代码 (如: 002963)"
                             value={code}
                             onChange={e => setCode(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleSearch()}
                         />
                         <button 
                             onClick={handleSearch}
@@ -259,6 +282,23 @@
                                 </div>
                             </div>
 
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium block mb-1">风险评级 (自动获取可覆盖)</label>
+                                <select
+                                    className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+                                    value={formData.risk_level}
+                                    onChange={e => setFormData({...formData, risk_level: e.target.value})}
+                                >
+                                    <option value="">自动</option>
+                                    <option value="R1 低风险">R1 低风险</option>
+                                    <option value="R2 中低风险">R2 中低风险</option>
+                                    <option value="R3 中等风险">R3 中等风险</option>
+                                    <option value="R4 中高风险">R4 中高风险</option>
+                                    <option value="R5 高风险">R5 高风险</option>
+                                </select>
+                                {fundInfo.risk_level && <p className="text-xs text-emerald-600 mt-1">自动检测: {fundInfo.risk_level}</p>}
+                            </div>
+
                             {formData.type === 'etf_linked' && (
                                 <div className="space-y-2 pt-2 border-t border-gray-200">
                                     <input 
@@ -293,11 +333,14 @@
             const [loading, setLoading] = useState(false);
             const [syncing, setSyncing] = useState(false);
             const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+            const [sortBy, setSortBy] = useState('涨跌幅');
+            const [sortDir, setSortDir] = useState('desc'); // desc 降序，asc 升序
+            const [groupBy, setGroupBy] = useState('none'); // none | 来源 | 类型 | 风险评级
 
             const loadData = async () => {
                 setLoading(true);
                 try {
-                    const res = await fetch('/api/estimates');
+                    const res = await fetch(`/api/estimates${API_USER}`);
                     const json = await res.json();
                     setData(json);
                 } catch (err) {
@@ -311,7 +354,7 @@
                 if(!confirm('确认同步到维格表?')) return;
                 setSyncing(true);
                 try {
-                    const res = await fetch('/api/sync', { method: 'POST' });
+                    const res = await fetch(`/api/sync${API_USER}`, { method: 'POST' });
                     const json = await res.json();
                     if(json.success) alert('同步成功');
                     else alert('同步失败: ' + json.message);
@@ -325,10 +368,19 @@
             const handleDelete = async (code) => {
                 if(!confirm(`确认删除代码为 ${code} 的基金?`)) return;
                 try {
-                    await fetch(`/api/funds/${code}`, { method: 'DELETE' });
+                    await fetch(`/api/funds/${code}${API_USER}`, { method: 'DELETE' });
                     loadData();
                 } catch(e) {
                     alert('删除失败');
+                }
+            };
+
+            const toggleSort = (field) => {
+                if (sortBy === field) {
+                    setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+                } else {
+                    setSortBy(field);
+                    setSortDir('desc');
                 }
             };
 
@@ -345,8 +397,6 @@
                 let validCount = 0;
                 
                 data.forEach(d => {
-                    // Try to parse number, but keep string for display if needed
-                    // d['涨跌幅'] is "0.0123" (string) usually
                     const pct = parseFloat(d['涨跌幅']);
                     if(!isNaN(pct)) {
                         totalPct += pct;
@@ -361,6 +411,49 @@
                     downCount: down
                 };
             }, [data]);
+
+            // 排序 + 分组计算
+            const processedData = useMemo(() => {
+                const sorted = [...data].sort((a, b) => {
+                    let va, vb;
+                    if (sortBy === '涨跌幅') {
+                        va = parseFloat(a['涨跌幅']) || 0;
+                        vb = parseFloat(b['涨跌幅']) || 0;
+                    } else if (sortBy === '基金名称') {
+                        va = a['基金名称'] || '';
+                        vb = b['基金名称'] || '';
+                        return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                    } else if (sortBy === '风险评级') {
+                        va = RISK_ORDER[a['风险评级']] || 99;
+                        vb = RISK_ORDER[b['风险评级']] || 99;
+                    } else if (sortBy === '来源') {
+                        va = a['来源'] || '';
+                        vb = b['来源'] || '';
+                        return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                    } else {
+                        return 0;
+                    }
+                    return sortDir === 'desc' ? vb - va : va - vb;
+                });
+
+                if (groupBy === 'none') return [{ key: null, items: sorted }];
+
+                const groups = {};
+                sorted.forEach(f => {
+                    const key = f[groupBy] || '未知';
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(f);
+                });
+
+                // 分组顺序
+                let keys = Object.keys(groups);
+                if (groupBy === '风险评级') {
+                    keys = keys.sort((a, b) => (RISK_ORDER[a] || 99) - (RISK_ORDER[b] || 99));
+                } else {
+                    keys = keys.sort();
+                }
+                return keys.map(k => ({ key: k, items: groups[k] }));
+            }, [data, sortBy, sortDir, groupBy]);
 
             return (
                 <div className="min-h-screen pb-12">
@@ -429,13 +522,54 @@
                             />
                         </div>
 
+                        {/* Sort & Group Controls */}
+                        <div className="flex flex-wrap items-center gap-3 mb-5">
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-gray-400 font-medium">排序</span>
+                                {['涨跌幅', '基金名称', '风险评级', '来源'].map(f => (
+                                    <button key={f} onClick={() => toggleSort(f)}
+                                        className={`flex items-center gap-0.5 text-xs px-2.5 py-1 rounded-full border transition-all ${
+                                            sortBy === f
+                                                ? 'bg-gray-900 text-white border-gray-900'
+                                                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                                        }`}>
+                                        {f}
+                                        {sortBy === f && <IconSort dir={sortDir} />}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="w-px h-4 bg-gray-200"/>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-gray-400 font-medium">分组</span>
+                                {[{v:'none',l:'无'},{v:'来源',l:'来源'},{v:'类型',l:'类型'},{v:'风险评级',l:'风险'}].map(({v,l}) => (
+                                    <button key={v} onClick={() => setGroupBy(v)}
+                                        className={`text-xs px-2.5 py-1 rounded-full border transition-all ${
+                                            groupBy === v
+                                                ? 'bg-gray-900 text-white border-gray-900'
+                                                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                                        }`}>{l}</button>
+                                ))}
+                            </div>
+                        </div>
+
                         {/* List */}
                         <div className="space-y-1">
                             {loading && data.length === 0 ? (
                                 <div className="text-center py-12 text-gray-400">加载中...</div>
-                            ) : data.length > 0 ? (
-                                data.map(fund => (
-                                    <FundRow key={fund['基金代码']} fund={fund} onDelete={handleDelete} />
+                            ) : processedData.length > 0 && processedData[0].items.length > 0 ? (
+                                processedData.map(group => (
+                                    <div key={group.key || 'all'}>
+                                        {group.key && (
+                                            <div className="flex items-center gap-2 mb-2 mt-4 first:mt-0">
+                                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{group.key}</span>
+                                                <span className="text-xs text-gray-300 bg-gray-100 px-1.5 py-0.5 rounded-full">{group.items.length}</span>
+                                                <div className="flex-1 h-px bg-gray-100"/>
+                                            </div>
+                                        )}
+                                        {group.items.map(fund => (
+                                            <FundRow key={fund['基金代码']} fund={fund} onDelete={handleDelete} />
+                                        ))}
+                                    </div>
                                 ))
                             ) : (
                                 <div className="text-center py-12">

@@ -25,20 +25,24 @@ VIKA_API_BASE = "https://vika.cn/fusion/v1"
 # 基金数据文件路径
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'funds.json')
 
-def load_funds():
-    if os.path.exists(DATA_FILE):
+def load_funds(data_file=None):
+    if data_file is None:
+        data_file = DATA_FILE
+    if os.path.exists(data_file):
         try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            with open(data_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Failed to load funds: {e}")
             return []
     return []
 
-def save_funds(funds):
+def save_funds(funds, data_file=None):
+    if data_file is None:
+        data_file = DATA_FILE
     try:
-        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        os.makedirs(os.path.dirname(data_file), exist_ok=True)
+        with open(data_file, 'w', encoding='utf-8') as f:
             json.dump(funds, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
@@ -265,6 +269,39 @@ def get_fund_basic_info(fund_code):
     return {'success': False}
 
 
+# 风险评级标签映射
+RISK_LEVEL_MAP = {
+    'low1': 'R1 低风险',
+    'low2': 'R2 中低风险',
+    'low3': 'R3 中等风险',
+    'low4': 'R4 中高风险',
+    'low5': 'R5 高风险',
+}
+
+def get_fund_risk_level(fund_code):
+    """
+    从天天基金网获取基金风险评级 (R1-R5)
+    解析东方财富基金详情页 fivebar chooseLow 样式类
+    """
+    try:
+        url = f"https://fund.eastmoney.com/f10/tsdata_{fund_code}.html"
+        headers = {
+            'Referer': 'https://fund.eastmoney.com',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, timeout=8, headers=headers, verify=False)
+        if response.status_code == 200:
+            import re
+            # 匹配 <span class='lowX chooseLow'> 或 <span class="lowX chooseLow">
+            match = re.search(r"class=['\"]?(low[1-5])\s+chooseLow['\"]?", response.text)
+            if match:
+                level_key = match.group(1)
+                return RISK_LEVEL_MAP.get(level_key, level_key.upper())
+    except Exception as e:
+        print(f"   ⚠️  获取风险评级失败 ({fund_code}): {e}")
+    return None
+
+
 def calculate_fund_estimate(fund):
     """
     获取单个基金的估值信息
@@ -277,8 +314,13 @@ def calculate_fund_estimate(fund):
     fund_name = fund['name']
     fund_type = fund['type']
     fund_source = fund.get('source', '未知')  # 获取来源
+
+    # 风险评级：先用配置里手动设置的，再尝试从网页抓取
+    risk_level = fund.get('risk_level')
+    if not risk_level:
+        risk_level = get_fund_risk_level(fund_code) or '未知'
     
-    print(f"\n📊 处理基金: {fund_name} ({fund_code}) - 来源: {fund_source}")
+    print(f"\n📊 处理基金: {fund_name} ({fund_code}) - 来源: {fund_source} - 风险: {risk_level}")
     
     # 方案1：天天基金网（可能随时失效）
     data = get_fund_realtime_data(fund_code)
@@ -289,6 +331,7 @@ def calculate_fund_estimate(fund):
             "基金名称": data['fund_name'],
             "基金代码": fund_code,
             "来源": fund_source,
+            "风险评级": risk_level,
             "昨日净值": f"{data['latest_nav']:.4f}",
             "当前估值": f"{data['estimate_nav']:.4f}",
             "涨跌幅": f"{data['change_pct']/100:.4f}",
@@ -333,6 +376,7 @@ def calculate_fund_estimate(fund):
                 "基金名称": basic_info['fund_name'],
                 "基金代码": fund_code,
                 "来源": fund_source,
+                "风险评级": risk_level,
                 "类型": f"ETF联接-{fund.get('etf_name', '')}",
                 "昨日净值": f"{latest_nav:.4f}",
                 "当前估值": f"{backup_data['estimate_nav']:.4f}",
@@ -349,6 +393,7 @@ def calculate_fund_estimate(fund):
         "基金名称": basic_info['fund_name'],
         "基金代码": fund_code,
         "来源": fund_source,
+        "风险评级": risk_level,
         "类型": fund_type,
         "昨日净值": f"{latest_nav:.4f}",
         "当前估值": f"{latest_nav:.4f}",

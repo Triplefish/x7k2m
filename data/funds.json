@@ -78,5 +78,12 @@
     "type": "etf_linked",
     "etf_code": "",
     "etf_name": ""
+  },
+  {
+    "code": "000386",
+    "name": "景顺长城景颐双利债券C",
+    "source": "理财通",
+    "type": "bond",
+    "risk_level": "R3 中等风险"
   }
 ]
