@@ -1,9 +1,44 @@
 [
-  {"code": "015790", "type": "active", "source": "其他"},
-  {"code": "025857", "type": "active", "source": "其他"},
-  {"code": "020840", "type": "active", "source": "其他"},
-  {"code": "017736", "type": "active", "source": "其他"},
-  {"code": "019062", "type": "active", "source": "其他"},
-  {"code": "016076", "type": "active", "source": "其他"},
-  {"code": "020973", "type": "active", "source": "其他"}
+  {
+    "code": "015790",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "025857",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "020840",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "017736",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "019062",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "016076",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  },
+  {
+    "code": "020973",
+    "type": "active",
+    "source": "其他",
+    "risk_level": "R4 中高风险"
+  }
 ]

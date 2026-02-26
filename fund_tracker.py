@@ -302,6 +302,32 @@ def get_fund_risk_level(fund_code):
     return None
 
 
+def batch_update_risk_levels(data_file=None):
+    """
+    批量补全所有基金的风险评级。
+    遍历 data_file 中的基金，对缺少 risk_level 的逐一从东方财富抓取并回写文件。
+    """
+    import time
+    funds = load_funds(data_file)
+    updated = 0
+    for fund in funds:
+        if not fund.get('risk_level'):
+            code = fund.get('code', '')
+            print(f"   🔍 抓取风险评级: {fund.get('name', code)} ({code})")
+            level = get_fund_risk_level(code)
+            if level:
+                fund['risk_level'] = level
+                updated += 1
+                print(f"      ✅ {level}")
+            time.sleep(0.5)  # 避免过快请求
+    if updated:
+        save_funds(funds, data_file)
+        print(f"✅ 已更新 {updated} 个基金的风险评级")
+    else:
+        print("ℹ️  所有基金已有风险评级，无需更新")
+    return updated
+
+
 def calculate_fund_estimate(fund):
     """
     获取单个基金的估值信息

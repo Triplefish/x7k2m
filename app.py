@@ -39,6 +39,14 @@ def _sync_vika_background(results):
     except Exception as e:
         print(f"⚠️  [后台] 维格表同步失败: {e}")
 
+def _refresh_risk_levels_background(data_file):
+    """后台线程：批量补全所有基金风险评级"""
+    try:
+        print("🔍 [后台] 开始批量更新风险评级...")
+        fund_tracker.batch_update_risk_levels(data_file)
+    except Exception as e:
+        print(f"⚠️  [后台] 批量更新风险评级失败: {e}")
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -64,6 +72,12 @@ def add_fund():
     save_funds_for_user(user, funds)
     if user == DEFAULT_USER:
         fund_tracker.FUNDS = funds
+
+    # 后台更新该用户所有基金的风险评级（补全缺失项）
+    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
+    t = threading.Thread(target=_refresh_risk_levels_background, args=(data_file,), daemon=True)
+    t.start()
+
     return jsonify({'success': True})
 
 @app.route('/api/funds/<string:code>', methods=['DELETE'])
@@ -127,6 +141,17 @@ def get_fund_info(code):
         })
         
     return jsonify({'success': False, 'message': '无法获取基金信息'}), 404
+
+@app.route('/api/update_risk_levels', methods=['POST'])
+def update_risk_levels():
+    """手动触发：批量补全当前用户所有基金的风险评级"""
+    user = get_user()
+    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
+    try:
+        updated = fund_tracker.batch_update_risk_levels(data_file)
+        return jsonify({'success': True, 'updated': updated})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sync', methods=['POST'])
 def sync_vika():
