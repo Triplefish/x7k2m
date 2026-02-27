@@ -130,7 +130,7 @@
 
             const loadFunds = async () => {
                 try {
-                    const response = await fetch(`https://raw.githubusercontent.com/Triplefish/x7k2m/main/data/${fundFile}`);
+                    const response = await fetch(`https://raw.githubusercontent.com/Triplefish/x7k2m/main/data/${fundFile}?t=${Date.now()}`);
                     const funds = await response.json();
                     setFundList(funds);
                     return funds;
