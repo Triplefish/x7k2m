@@ -407,7 +407,7 @@
                                 </button>
                                 {/* 以下按钮仅动态模式显示 */}
                                 {!IS_STATIC && (
-                                    <>
+                                    <React.Fragment>
                                         <button onClick={handleUpdateRiskLevels} disabled={updatingRisk}
                                             className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-xs font-medium transition-colors disabled:opacity-50"
                                             title="批量补全风险评级">
@@ -424,7 +424,7 @@
                                             className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium shadow-lg shadow-gray-200 transition-all">
                                             <IconPlus /><span>添加</span>
                                         </button>
-                                    </>
+                                    </React.Fragment>
                                 )}
                             </div>
                         </div>
