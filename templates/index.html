@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -177,7 +177,7 @@
                         alert('未找到该基金信息');
                         setFundInfo(null);
                     }
-                } catch { alert('查询出错'); }
+                } catch (e) { alert('查询出错'); }
                 finally { setLoading(false); }
             };
 
@@ -194,7 +194,7 @@
                     const data = await res.json();
                     if (data.success) { onRefresh(); onClose(); }
                     else alert(data.message || '添加失败');
-                } catch { alert('网络错误'); }
+                } catch (e) { alert('网络错误'); }
             };
 
             return (
@@ -284,7 +284,7 @@
                         '涨跌幅': change.toFixed(6), '涨跌额': (est - nav).toFixed(4),
                         '更新时间': d.gztime || d.jzrq || '',
                     });
-                } catch { /* skip failed */ }
+                } catch (e) { /* skip failed */ }
             }
             return results;
         };
@@ -322,7 +322,7 @@
                     const res  = await fetch(`/api/sync${API_USER}`, { method: 'POST' });
                     const json = await res.json();
                     json.success ? alert('同步成功') : alert('同步失败: ' + json.message);
-                } catch { alert('同步错误'); }
+                } catch (e) { alert('同步错误'); }
                 finally { setSyncing(false); }
             };
 
@@ -334,14 +334,14 @@
                     const json = await res.json();
                     if (json.success) { alert(`更新完成，共补全 ${json.updated} 个基金的风险评级`); loadData(); }
                     else alert('更新失败: ' + json.message);
-                } catch { alert('请求出错'); }
+                } catch (e) { alert('请求出错'); }
                 finally { setUpdatingRisk(false); }
             };
 
             const handleDelete = async (code) => {
                 if (!confirm(`确认删除代码为 ${code} 的基金?`)) return;
                 try { await fetch(`/api/funds/${code}${API_USER}`, { method: 'DELETE' }); loadData(); }
-                catch { alert('删除失败'); }
+                catch (e) { alert('删除失败'); }
             };
 
             const toggleSort = (field) => {
