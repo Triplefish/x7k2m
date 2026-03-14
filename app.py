@@ -1,176 +1,328 @@
+"""
+基金追踪器后端 - 数据库版
+使用 Flask + SQLAlchemy + JWT 认证
+"""
 from flask import Flask, render_template, request, jsonify
-import sys
+from flask_jwt_extended import (
+    JWTManager, create_access_token, create_refresh_token,
+    jwt_required, get_jwt_identity
+)
+from flask_migrate import Migrate
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from datetime import timedelta
 import os
 import threading
 import fund_tracker
-import json
+from models import db, bcrypt, User, Fund, UserFund
 
 app = Flask(__name__)
 
-# 用户数据文件映射
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-USER_DATA_FILES = {
-    'user1': os.path.join(DATA_DIR, 'funds.json'),
-    'user2': os.path.join(DATA_DIR, 'funds_user2.json'),
-}
-DEFAULT_USER = 'user1'
+# ─── 配置 ──────────────────────────────────────────────────────────
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'DATABASE_URL', 'sqlite:///fund_tracker.db'
+).replace('postgres://', 'postgresql://')  # Railway 兼容
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'change-me-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES']  = timedelta(minutes=30)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
 
-def get_user(req=None):
-    """从请求参数中获取用户标识，默认为 user1"""
-    if req is None:
-        req = request
-    return req.args.get('user', DEFAULT_USER)
+# ─── 扩展初始化 ────────────────────────────────────────────────────
+db.init_app(app)
+bcrypt.init_app(app)
+jwt = JWTManager(app)
+migrate = Migrate(app, db)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per minute"]
+)
 
-def load_funds_for_user(user):
-    """加载指定用户的基金列表"""
-    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
-    return fund_tracker.load_funds(data_file)
-
-def save_funds_for_user(user, funds):
-    """保存指定用户的基金列表"""
-    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
-    return fund_tracker.save_funds(funds, data_file)
-
+# ─── 辅助函数 ──────────────────────────────────────────────────────
 def _sync_vika_background(results):
-    """后台线程：同步数据到维格表"""
     try:
-        print("🔄 [后台] 正在自动同步 user1 数据到维格表...")
         fund_tracker.update_vika_table(results)
     except Exception as e:
         print(f"⚠️  [后台] 维格表同步失败: {e}")
 
-def _refresh_risk_levels_background(data_file):
-    """后台线程：批量补全所有基金风险评级"""
-    try:
-        print("🔍 [后台] 开始批量更新风险评级...")
-        fund_tracker.batch_update_risk_levels(data_file)
-    except Exception as e:
-        print(f"⚠️  [后台] 批量更新风险评级失败: {e}")
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+def _refresh_risk_levels_background(user_id):
+    """后台更新指定用户所有基金的风险评级"""
+    with app.app_context():
+        holdings = UserFund.query.filter_by(user_id=user_id).all()
+        import time
+        for uf in holdings:
+            fund = uf.fund
+            if fund and not fund.risk_level:
+                level = fund_tracker.get_fund_risk_level(fund.code)
+                if level:
+                    fund.risk_level = level
+                time.sleep(0.5)
+        db.session.commit()
 
+
+# ─── 认证端点 ──────────────────────────────────────────────────────
+@app.route('/api/auth/login', methods=['POST'])
+@limiter.limit("10 per minute")
+def login():
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not username or not password:
+        return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+
+    user = User.query.filter_by(username=username, is_active=True).first()
+    if not user or not user.check_password(password):
+        return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+
+    access_token  = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+    return jsonify({
+        'success':       True,
+        'access_token':  access_token,
+        'refresh_token': refresh_token,
+        'user':          user.to_dict()
+    })
+
+
+@app.route('/api/auth/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    user_id = get_jwt_identity()
+    access_token = create_access_token(identity=user_id)
+    return jsonify({'access_token': access_token})
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@jwt_required()
+def me():
+    user_id = int(get_jwt_identity())
+    user = User.query.get_or_404(user_id)
+    return jsonify(user.to_dict())
+
+
+# ─── 基金管理端点 ───────────────────────────────────────────────────
 @app.route('/api/funds', methods=['GET'])
+@jwt_required()
 def get_funds():
-    user = get_user()
-    funds = load_funds_for_user(user)
-    return jsonify(funds)
+    user_id = int(get_jwt_identity())
+    holdings = (
+        UserFund.query
+        .filter_by(user_id=user_id)
+        .join(Fund)
+        .all()
+    )
+    return jsonify([uf.to_dict() for uf in holdings])
+
 
 @app.route('/api/funds', methods=['POST'])
+@jwt_required()
 def add_fund():
-    user = get_user()
-    data = request.json
-    funds = load_funds_for_user(user)
-    
-    # Check if duplicate
-    for f in funds:
-        if f['code'] == data['code']:
-            return jsonify({'success': False, 'message': '基金已存在'}), 400
-            
-    funds.append(data)
-    save_funds_for_user(user, funds)
-    if user == DEFAULT_USER:
-        fund_tracker.FUNDS = funds
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
 
-    # 后台更新该用户所有基金的风险评级（补全缺失项）
-    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
-    t = threading.Thread(target=_refresh_risk_levels_background, args=(data_file,), daemon=True)
+    code = data.get('code', '').strip()
+    if not code or not code.isdigit() or len(code) != 6:
+        return jsonify({'success': False, 'message': '基金代码必须是6位数字'}), 400
+
+    # 检查是否已持有
+    existing = UserFund.query.filter_by(user_id=user_id, fund_code=code).first()
+    if existing:
+        return jsonify({'success': False, 'message': '已在持仓中'}), 400
+
+    # 获取或创建基金信息
+    fund = Fund.query.get(code)
+    if not fund:
+        fund = Fund(
+            code=code,
+            name=data.get('name', code),
+            type=data.get('type', 'active'),
+            etf_code=data.get('etf_code') or None,
+            etf_name=data.get('etf_name') or None,
+            risk_level=data.get('risk_level') or None,
+        )
+        db.session.add(fund)
+    else:
+        # 有新信息时更新缓存
+        if data.get('name'):
+            fund.name = data['name']
+        if data.get('risk_level'):
+            fund.risk_level = data['risk_level']
+
+    shares = data.get('shares', 0)
+    try:
+        shares = float(shares)
+        if shares < 0:
+            shares = 0
+    except (TypeError, ValueError):
+        shares = 0
+
+    holding = UserFund(
+        user_id=user_id,
+        fund_code=code,
+        source=data.get('source', '其他'),
+        shares=shares,
+        cost_price=data.get('cost_price') or None,
+    )
+    db.session.add(holding)
+    db.session.commit()
+
+    # 后台补全风险评级
+    t = threading.Thread(target=_refresh_risk_levels_background, args=(user_id,), daemon=True)
     t.start()
 
     return jsonify({'success': True})
 
+
+@app.route('/api/funds/<string:code>', methods=['PUT'])
+@jwt_required()
+def update_fund(code):
+    """更新持仓信息（份额、来源、成本）"""
+    user_id = int(get_jwt_identity())
+    holding = UserFund.query.filter_by(user_id=user_id, fund_code=code).first_or_404()
+
+    data = request.get_json() or {}
+
+    if 'shares' in data:
+        try:
+            val = float(data['shares'])
+            holding.shares = max(0, val)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'message': '份额格式不正确'}), 400
+
+    if 'source' in data:
+        holding.source = data['source']
+
+    if 'cost_price' in data:
+        try:
+            holding.cost_price = float(data['cost_price']) if data['cost_price'] else None
+        except (TypeError, ValueError):
+            pass
+
+    db.session.commit()
+    return jsonify({'success': True, 'holding': holding.to_dict()})
+
+
 @app.route('/api/funds/<string:code>', methods=['DELETE'])
+@jwt_required()
 def delete_fund(code):
-    user = get_user()
-    funds = load_funds_for_user(user)
-    new_funds = [f for f in funds if f['code'] != code]
-    save_funds_for_user(user, new_funds)
-    if user == DEFAULT_USER:
-        fund_tracker.FUNDS = new_funds
+    user_id = int(get_jwt_identity())
+    holding = UserFund.query.filter_by(user_id=user_id, fund_code=code).first_or_404()
+    db.session.delete(holding)
+    db.session.commit()
     return jsonify({'success': True})
 
+
+# ─── 估值端点 ───────────────────────────────────────────────────────
 @app.route('/api/estimates', methods=['GET'])
+@jwt_required()
 def get_estimates():
-    user = get_user()
-    funds = load_funds_for_user(user)
+    user_id = int(get_jwt_identity())
+    holdings = UserFund.query.filter_by(user_id=user_id).join(Fund).all()
+
     results = []
-    
-    for fund in funds:
+    for uf in holdings:
+        fund_dict = uf.to_dict()
         try:
-            res = fund_tracker.calculate_fund_estimate(fund)
+            res = fund_tracker.calculate_fund_estimate(fund_dict)
             if res:
+                # 注入份额和市值
+                shares = float(uf.shares) if uf.shares else 0
+                res['shares'] = shares
+                if shares > 0:
+                    try:
+                        nav = float(res.get('当前估值', 0))
+                        res['total_value'] = round(shares * nav, 2)
+                    except (TypeError, ValueError):
+                        res['total_value'] = 0
+                else:
+                    res['total_value'] = 0
                 results.append(res)
             else:
                 results.append({
-                    "基金名称": fund.get('name', fund['code']),
-                    "基金代码": fund['code'],
-                    "当前估值": "获取失败",
-                    "涨跌幅": "0",
-                    "风险评级": fund.get('risk_level', ''),
-                    "error": True
+                    '基金名称': fund_dict.get('name', code),
+                    '基金代码': uf.fund_code,
+                    '当前估值': '获取失败',
+                    '涨跌幅': '0',
+                    '风险评级': fund_dict.get('risk_level', ''),
+                    'shares': float(uf.shares) if uf.shares else 0,
+                    'total_value': 0,
+                    'error': True,
                 })
         except Exception as e:
             results.append({
-                "基金名称": fund.get('name', fund['code']),
-                "基金代码": fund['code'],
-                "当前估值": "出错",
-                "涨跌幅": "0",
-                "风险评级": fund.get('risk_level', ''),
-                "error": str(e)
+                '基金名称': fund_dict.get('name', uf.fund_code),
+                '基金代码': uf.fund_code,
+                '当前估值': '出错',
+                '涨跌幅': '0',
+                '风险评级': fund_dict.get('risk_level', ''),
+                'shares': float(uf.shares) if uf.shares else 0,
+                'total_value': 0,
+                'error': str(e),
             })
 
-    # user1 每次刷新自动同步到维格表（后台线程，不阻塞响应）
-    if user == 'user1' and results:
+    # 后台同步维格表（可选，保留兼容）
+    if results:
         t = threading.Thread(target=_sync_vika_background, args=(results,), daemon=True)
         t.start()
 
     return jsonify(results)
 
+
 @app.route('/api/fund_info/<string:code>', methods=['GET'])
 def get_fund_info(code):
+    """公开接口：查询基金基础信息（用于添加前的预搜索）"""
+    if not code.isdigit() or len(code) != 6:
+        return jsonify({'success': False, 'message': '无效的基金代码'}), 400
+
     info = fund_tracker.get_fund_realtime_data(code)
     if info['success']:
-        # 尝试获取风险评级
         risk_level = fund_tracker.get_fund_risk_level(code)
         return jsonify({
-            'fund_name': info['fund_name'],
-            'type': 'active',
+            'fund_name':  info['fund_name'],
+            'type':       'active',
             'risk_level': risk_level or '',
-            'success': True
+            'success':    True,
         })
-        
     return jsonify({'success': False, 'message': '无法获取基金信息'}), 404
 
+
 @app.route('/api/update_risk_levels', methods=['POST'])
+@jwt_required()
 def update_risk_levels():
-    """手动触发：批量补全当前用户所有基金的风险评级"""
-    user = get_user()
-    data_file = USER_DATA_FILES.get(user, USER_DATA_FILES[DEFAULT_USER])
-    try:
-        updated = fund_tracker.batch_update_risk_levels(data_file)
-        return jsonify({'success': True, 'updated': updated})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+    user_id = int(get_jwt_identity())
+    t = threading.Thread(target=_refresh_risk_levels_background, args=(user_id,), daemon=True)
+    t.start()
+    return jsonify({'success': True, 'message': '已在后台开始更新，刷新估值后生效'})
+
 
 @app.route('/api/sync', methods=['POST'])
+@jwt_required()
 def sync_vika():
-    user = get_user()
-    funds = load_funds_for_user(user)
+    user_id = int(get_jwt_identity())
+    holdings = UserFund.query.filter_by(user_id=user_id).join(Fund).all()
     results = []
-    for fund in funds:
-        res = fund_tracker.calculate_fund_estimate(fund)
+    for uf in holdings:
+        res = fund_tracker.calculate_fund_estimate(uf.to_dict())
         if res:
             results.append(res)
-            
+
     if not results:
         return jsonify({'success': False, 'message': '无数据可同步'})
-        
-    success = fund_tracker.update_vika_table(results)
-    if success:
-        return jsonify({'success': True})
-    else:
-        return jsonify({'success': False, 'message': '同步失败，请检查日志'})
 
+    success = fund_tracker.update_vika_table(results)
+    return jsonify({'success': success, 'message': '' if success else '同步失败，请检查日志'})
+
+
+# ─── 页面 ───────────────────────────────────────────────────────────
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+# ─── 启动 ───────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True, port=8888)

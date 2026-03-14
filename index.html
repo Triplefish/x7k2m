@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -17,7 +17,6 @@
         body { background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        /* 排序栏隐藏滚动条但保留滑动功能 */
         .scroll-x::-webkit-scrollbar { display: none; }
         .scroll-x { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
@@ -26,28 +25,53 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
-        // ─── 环境检测 ──────────────────────────────────────────────
-        // IS_STATIC = true  → GitHub Pages 纯静态模式（无后端）
-        // IS_STATIC = false → Cloudflare Pages / 本地 Flask（有 /api/ 路由）
-        const IS_STATIC = window.location.hostname.includes('github.io')
-            || window.location.hostname.includes('raw.github');
+        // ─── Token 管理 ────────────────────────────────────────────
+        const TOKEN_KEY = 'fund_access_token';
+        const REFRESH_KEY = 'fund_refresh_token';
 
-        // GitHub Pages 静态模式的基金数据源（仅 IS_STATIC 时使用）
-        const GH_RAW_BASE = 'https://raw.githubusercontent.com/Triplefish/x7k2m/main/data/';
+        const getToken = () => localStorage.getItem(TOKEN_KEY);
+        const setTokens = (access, refresh) => {
+            localStorage.setItem(TOKEN_KEY, access);
+            if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+        };
+        const clearTokens = () => {
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(REFRESH_KEY);
+        };
 
-        // 用户参数：兼容 ?user=X（CF/Flask）和 ?u=X（旧 GH Pages 链接）
-        const _params = new URLSearchParams(window.location.search);
-        const CURRENT_USER = _params.get('user') || _params.get('u') || 'user1';
-        const API_USER = `?user=${CURRENT_USER}`;
+        // 带 JWT 的 fetch 封装，自动刷新 token
+        const apiFetch = async (url, options = {}) => {
+            const token = getToken();
+            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const USER_FUND_MAP = { user1: 'funds.json', user2: 'funds_user2.json' };
+            let res = await fetch(url, { ...options, headers });
+
+            // token 过期时尝试刷新
+            if (res.status === 401) {
+                const refreshToken = localStorage.getItem(REFRESH_KEY);
+                if (refreshToken) {
+                    const rRes = await fetch('/api/auth/refresh', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${refreshToken}`, 'Content-Type': 'application/json' }
+                    });
+                    if (rRes.ok) {
+                        const rData = await rRes.json();
+                        setTokens(rData.access_token, null);
+                        headers['Authorization'] = `Bearer ${rData.access_token}`;
+                        res = await fetch(url, { ...options, headers });
+                    }
+                }
+            }
+            return res;
+        };
 
         // 风险评级排序权重
         const RISK_ORDER = { 'R1 低风险': 1, 'R2 中低风险': 2, 'R3 中等风险': 3, 'R4 中高风险': 4, 'R5 高风险': 5 };
 
-        // ─── Icons ────────────────────────────────────────────────
+        // ─── Icons ─────────────────────────────────────────────────
         const IconTrendingUp   = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>;
         const IconTrendingDown = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>;
         const IconRefresh      = ({ spin }) => <svg className={spin ? 'animate-spin' : ''} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>;
@@ -56,8 +80,9 @@
         const IconTrash        = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
         const IconSort         = ({ dir }) => <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{dir === 'asc' ? <polyline points="18 15 12 9 6 15"/> : <polyline points="6 9 12 15 18 9"/>}</svg>;
         const IconShield       = () => <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
+        const IconLogout       = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 
-        // ─── Components ───────────────────────────────────────────
+        // ─── RiskBadge ──────────────────────────────────────────────
         const RiskBadge = ({ level }) => {
             if (!level || level === '未知') return <span className="text-xs text-gray-300">—</span>;
             const colorMap = {
@@ -72,22 +97,56 @@
             return <span className={`text-xs border px-1.5 py-0.5 rounded font-mono ${cls}`}>{level}</span>;
         };
 
+        // ─── StatCard ───────────────────────────────────────────────
         const StatCard = ({ label, value, subValue, trend }) => {
             const colorClass = trend > 0 ? 'text-red-500' : (trend < 0 ? 'text-emerald-500' : 'text-gray-500');
             return (
-                <div className="bg-white p-3 sm:p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
-                    <span className="text-gray-400 text-xs uppercase tracking-wider font-semibold mb-0.5 sm:mb-1 text-center leading-tight">{label}</span>
-                    <span className={`text-xl sm:text-2xl font-bold ${colorClass}`}>{value}</span>
+                <div className="bg-white p-3 sm:p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
+                    <span className="text-gray-400 text-xs uppercase tracking-wider font-semibold mb-0.5 text-center leading-tight">{label}</span>
+                    <span className={`text-lg sm:text-2xl font-bold ${colorClass}`}>{value}</span>
                     {subValue && <span className="text-xs text-gray-400 mt-0.5">{subValue}</span>}
                 </div>
             );
         };
 
-        const FundRow = ({ fund, onDelete }) => {
+        // ─── Modal ──────────────────────────────────────────────────
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                            <h3 className="font-bold text-lg text-gray-800">{title}</h3>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+                        </div>
+                        <div className="p-6">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ─── FundRow ────────────────────────────────────────────────
+        const FundRow = ({ fund, onDelete, onSharesChange }) => {
+            const [editingShares, setEditingShares] = useState(false);
+            const [sharesInput, setSharesInput]     = useState(String(fund.shares || ''));
+            const [saving, setSaving]               = useState(false);
+
             const isUp    = parseFloat(fund['涨跌幅']) > 0;
             const isDown  = parseFloat(fund['涨跌幅']) < 0;
             const trendColor = isUp ? 'text-red-500' : (isDown ? 'text-emerald-500' : 'text-gray-500');
             const changePct  = `${isUp ? '+' : ''}${(parseFloat(fund['涨跌幅']) * 100).toFixed(2)}%`;
+
+            const handleSaveShares = async () => {
+                const val = parseFloat(sharesInput);
+                if (isNaN(val) || val < 0) { setSharesInput(String(fund.shares || '')); setEditingShares(false); return; }
+                setSaving(true);
+                await onSharesChange(fund['基金代码'], val);
+                setSaving(false);
+                setEditingShares(false);
+            };
+
+            const totalValue = fund.total_value;
+            const hasShares  = (fund.shares || 0) > 0;
 
             return (
                 <div className="group bg-white rounded-xl p-3 sm:p-4 mb-2 sm:mb-3 border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 fade-in">
@@ -111,9 +170,10 @@
                             <span>{changePct}</span>
                         </div>
                     </div>
-                    {/* 下行：估值 + 盈亏 + 删除 */}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50">
-                        <div className="flex gap-4 sm:gap-6">
+
+                    {/* 下行：估值 + 份额 + 市值 + 删除 */}
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50 gap-2 flex-wrap">
+                        <div className="flex gap-3 sm:gap-5 flex-wrap items-end">
                             <div>
                                 <span className="text-xs text-gray-400 block">当前估值</span>
                                 <span className="font-mono text-sm font-medium text-gray-700">{fund['当前估值']}</span>
@@ -126,48 +186,68 @@
                                 <span className="text-xs text-gray-400 block">昨日净值</span>
                                 <span className="font-mono text-sm text-gray-500">{fund['昨日净值']}</span>
                             </div>
+                            {/* 份额 */}
+                            <div>
+                                <span className="text-xs text-gray-400 block">持有份额</span>
+                                {editingShares ? (
+                                    <div className="flex items-center gap-1">
+                                        <input
+                                            type="number" min="0" step="0.0001"
+                                            className="font-mono text-sm w-24 border border-gray-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                                            value={sharesInput}
+                                            onChange={e => setSharesInput(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleSaveShares(); if (e.key === 'Escape') { setEditingShares(false); setSharesInput(String(fund.shares || '')); } }}
+                                            autoFocus
+                                        />
+                                        <button onClick={handleSaveShares} disabled={saving} className="text-xs text-primary font-medium disabled:opacity-50">
+                                            {saving ? '...' : '✓'}
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => { setSharesInput(String(fund.shares || '')); setEditingShares(true); }}
+                                        className="font-mono text-sm text-gray-700 hover:text-primary transition-colors group/shares"
+                                    >
+                                        {(fund.shares || 0) > 0 ? Number(fund.shares).toLocaleString('zh-CN') : <span className="text-gray-300 text-xs">点击填写</span>}
+                                    </button>
+                                )}
+                            </div>
+                            {/* 持仓市值 */}
+                            {hasShares && totalValue > 0 && (
+                                <div>
+                                    <span className="text-xs text-gray-400 block">持仓市值</span>
+                                    <span className="font-mono text-sm font-semibold text-gray-800">
+                                        ¥{totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                            )}
                         </div>
-                        {/* 删除按钮：仅动态模式显示 */}
-                        {!IS_STATIC && onDelete && (
-                            <button
-                                onClick={() => onDelete(fund['基金代码'])}
-                                className="p-2 text-gray-300 hover:text-red-500 active:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-30 sm:opacity-0 sm:group-hover:opacity-100"
-                                title="删除"
-                            >
-                                <IconTrash />
-                            </button>
-                        )}
+
+                        {/* 删除按钮 */}
+                        <button
+                            onClick={() => onDelete(fund['基金代码'])}
+                            className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-30 sm:opacity-0 sm:group-hover:opacity-100 shrink-0"
+                            title="删除"
+                        >
+                            <IconTrash />
+                        </button>
                     </div>
                 </div>
             );
         };
 
-        const Modal = ({ isOpen, onClose, title, children }) => {
-            if (!isOpen) return null;
-            return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-                            <h3 className="font-bold text-lg text-gray-800">{title}</h3>
-                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
-                        </div>
-                        <div className="p-6">{children}</div>
-                    </div>
-                </div>
-            );
-        };
-
+        // ─── AddFundForm ────────────────────────────────────────────
         const AddFundForm = ({ onClose, onRefresh }) => {
             const [code, setCode]         = useState('');
             const [loading, setLoading]   = useState(false);
             const [fundInfo, setFundInfo] = useState(null);
-            const [formData, setFormData] = useState({ type: 'active', source: '理财通', etf_code: '', etf_name: '', risk_level: '' });
+            const [formData, setFormData] = useState({ type: 'active', source: '理财通', etf_code: '', etf_name: '', risk_level: '', shares: '' });
 
             const handleSearch = async () => {
                 if (!code) return;
                 setLoading(true);
                 try {
-                    const res  = await fetch(`/api/fund_info/${code}`);
+                    const res  = await apiFetch(`/api/fund_info/${code}`);
                     const data = await res.json();
                     if (data.success) {
                         setFundInfo(data);
@@ -184,13 +264,15 @@
             const handleSubmit = async () => {
                 if (!fundInfo) return;
                 try {
+                    const shares = parseFloat(formData.shares) || 0;
                     const payload = {
                         code, name: fundInfo.fund_name, source: formData.source, type: formData.type,
                         risk_level: formData.risk_level || undefined,
                         etf_code: formData.type === 'etf_linked' ? formData.etf_code : undefined,
                         etf_name: formData.type === 'etf_linked' ? formData.etf_name : undefined,
+                        shares: shares,
                     };
-                    const res  = await fetch(`/api/funds${API_USER}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    const res  = await apiFetch('/api/funds', { method: 'POST', body: JSON.stringify(payload) });
                     const data = await res.json();
                     if (data.success) { onRefresh(); onClose(); }
                     else alert(data.message || '添加失败');
@@ -244,6 +326,13 @@
                                     <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="关联ETF名称 (选填)" value={formData.etf_name} onChange={e => setFormData({...formData, etf_name: e.target.value})} />
                                 </div>
                             )}
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium block mb-1">初始份额（选填）</label>
+                                <input type="number" min="0" step="0.0001"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                    placeholder="0.0000" value={formData.shares}
+                                    onChange={e => setFormData({...formData, shares: e.target.value})} />
+                            </div>
                             <button onClick={handleSubmit} className="w-full bg-primary text-white py-2 rounded-lg hover:bg-emerald-600 font-medium shadow-sm shadow-emerald-200 transition-all mt-2">
                                 确认添加
                             </button>
@@ -253,50 +342,82 @@
             );
         };
 
-        // ─── 数据层：JSONP（静态模式）──────────────────────────────
-        const fetchFundJsonp = (code) => new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            const timer  = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, 8000);
-            const cleanup = () => { window.jsonpgz = null; document.body.contains(script) && document.body.removeChild(script); };
-            window.jsonpgz = (data) => { clearTimeout(timer); cleanup(); resolve(data); };
-            script.onerror = () => { clearTimeout(timer); cleanup(); reject(new Error('load error')); };
-            script.src = `https://fundgz.1234567.com.cn/js/${code}.js?v=${Date.now()}`;
-            document.body.appendChild(script);
-        });
+        // ─── LoginPage ──────────────────────────────────────────────
+        const LoginPage = ({ onLogin }) => {
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [loading, setLoading]   = useState(false);
+            const [error, setError]       = useState('');
 
-        const loadStaticEstimates = async () => {
-            const fundFile = USER_FUND_MAP[CURRENT_USER] || 'funds.json';
-            const res      = await fetch(`${GH_RAW_BASE}${fundFile}?t=${Date.now()}`);
-            const funds    = await res.json();
-            const results  = [];
-            for (const fund of funds) {
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!username || !password) { setError('请输入用户名和密码'); return; }
+                setLoading(true);
+                setError('');
                 try {
-                    const d       = await fetchFundJsonp(fund.code);
-                    const nav     = parseFloat(d.dwjz);
-                    const est     = d.gsz ? parseFloat(d.gsz) : nav;
-                    const change  = (est - nav) / nav;
-                    const typeLabel = fund.type === 'etf_linked' ? `ETF联接-${fund.etf_name || ''}` : fund.type === 'bond' ? '债券型' : '主动型';
-                    results.push({
-                        '基金名称': d.name, '基金代码': fund.code,
-                        '来源': fund.source || '其他', '类型': typeLabel,
-                        '风险评级': fund.risk_level || '',
-                        '昨日净值': nav.toFixed(4), '当前估值': est.toFixed(4),
-                        '涨跌幅': change.toFixed(6), '涨跌额': (est - nav).toFixed(4),
-                        '更新时间': d.gztime || d.jzrq || '',
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
                     });
-                } catch (e) { /* skip failed */ }
-            }
-            return results;
+                    const data = await res.json();
+                    if (data.success) {
+                        setTokens(data.access_token, data.refresh_token);
+                        onLogin(data.user);
+                    } else {
+                        setError(data.message || '登录失败');
+                    }
+                } catch (e) {
+                    setError('网络错误，请重试');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center px-4">
+                    <div className="w-full max-w-sm">
+                        <div className="text-center mb-8">
+                            <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                <span className="text-3xl">📈</span>
+                            </div>
+                            <h1 className="text-2xl font-bold text-gray-900">基金追踪</h1>
+                            <p className="text-gray-400 text-sm mt-1">登录以查看您的持仓</p>
+                        </div>
+                        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
+                            <div>
+                                <label className="text-sm font-medium text-gray-700 block mb-1.5">用户名</label>
+                                <input
+                                    type="text" autoComplete="username"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                                    placeholder="请输入用户名" value={username}
+                                    onChange={e => setUsername(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-gray-700 block mb-1.5">密码</label>
+                                <input
+                                    type="password" autoComplete="current-password"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                                    placeholder="请输入密码" value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                />
+                            </div>
+                            {error && <p className="text-sm text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+                            <button type="submit" disabled={loading}
+                                className="w-full bg-gray-900 text-white py-2.5 rounded-lg hover:bg-gray-700 font-medium transition-colors disabled:opacity-50 shadow-sm">
+                                {loading ? '登录中...' : '登录'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
         };
 
-        // ─── 数据层：API（动态模式）───────────────────────────────
-        const loadApiEstimates = async () => {
-            const res = await fetch(`/api/estimates${API_USER}`);
-            return res.json();
-        };
-
-        // ─── App ──────────────────────────────────────────────────
+        // ─── App ────────────────────────────────────────────────────
         const App = () => {
+            const [user, setUser]                   = useState(null);
+            const [authChecked, setAuthChecked]     = useState(false);
             const [data, setData]                   = useState([]);
             const [loading, setLoading]             = useState(false);
             const [syncing, setSyncing]             = useState(false);
@@ -306,20 +427,45 @@
             const [sortDir, setSortDir]             = useState('desc');
             const [groupBy, setGroupBy]             = useState('none');
 
-            const loadData = async () => {
+            // 启动时检查已有 token
+            useEffect(() => {
+                const token = getToken();
+                if (token) {
+                    apiFetch('/api/auth/me')
+                        .then(res => res.ok ? res.json() : null)
+                        .then(u => { if (u) setUser(u); })
+                        .finally(() => setAuthChecked(true));
+                } else {
+                    setAuthChecked(true);
+                }
+            }, []);
+
+            const handleLogin = (u) => setUser(u);
+
+            const handleLogout = () => {
+                clearTokens();
+                setUser(null);
+                setData([]);
+            };
+
+            const loadData = useCallback(async () => {
                 setLoading(true);
                 try {
-                    const results = IS_STATIC ? await loadStaticEstimates() : await loadApiEstimates();
+                    const res     = await apiFetch('/api/estimates');
+                    if (res.status === 401) { handleLogout(); return; }
+                    const results = await res.json();
                     setData(results);
                 } catch (err) { console.error(err); }
                 finally { setLoading(false); }
-            };
+            }, []);
+
+            useEffect(() => { if (user) loadData(); }, [user]);
 
             const handleSync = async () => {
                 if (!confirm('确认同步到维格表?')) return;
                 setSyncing(true);
                 try {
-                    const res  = await fetch(`/api/sync${API_USER}`, { method: 'POST' });
+                    const res  = await apiFetch('/api/sync', { method: 'POST' });
                     const json = await res.json();
                     json.success ? alert('同步成功') : alert('同步失败: ' + json.message);
                 } catch (e) { alert('同步错误'); }
@@ -327,12 +473,12 @@
             };
 
             const handleUpdateRiskLevels = async () => {
-                if (!confirm('将为所有缺少风险评级的基金自动获取（可能需要几十秒），确认继续?')) return;
+                if (!confirm('将为所有缺少风险评级的基金自动获取（后台执行），确认继续?')) return;
                 setUpdatingRisk(true);
                 try {
-                    const res  = await fetch(`/api/update_risk_levels${API_USER}`, { method: 'POST' });
+                    const res  = await apiFetch('/api/update_risk_levels', { method: 'POST' });
                     const json = await res.json();
-                    if (json.success) { alert(`更新完成，共补全 ${json.updated} 个基金的风险评级`); loadData(); }
+                    if (json.success) { alert(json.message || '已触发后台更新，稍后刷新查看'); loadData(); }
                     else alert('更新失败: ' + json.message);
                 } catch (e) { alert('请求出错'); }
                 finally { setUpdatingRisk(false); }
@@ -340,8 +486,26 @@
 
             const handleDelete = async (code) => {
                 if (!confirm(`确认删除代码为 ${code} 的基金?`)) return;
-                try { await fetch(`/api/funds/${code}${API_USER}`, { method: 'DELETE' }); loadData(); }
-                catch (e) { alert('删除失败'); }
+                try {
+                    await apiFetch(`/api/funds/${code}`, { method: 'DELETE' });
+                    loadData();
+                } catch (e) { alert('删除失败'); }
+            };
+
+            const handleSharesChange = async (code, shares) => {
+                try {
+                    const res = await apiFetch(`/api/funds/${code}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ shares })
+                    });
+                    if (!res.ok) { alert('更新份额失败'); return; }
+                    // 本地更新，避免全量刷新
+                    setData(prev => prev.map(f => {
+                        if (f['基金代码'] !== code) return f;
+                        const nav = parseFloat(f['当前估值']) || 0;
+                        return { ...f, shares, total_value: shares > 0 ? Math.round(shares * nav * 100) / 100 : 0 };
+                    }));
+                } catch (e) { alert('网络错误'); }
             };
 
             const toggleSort = (field) => {
@@ -349,16 +513,20 @@
                 else { setSortBy(field); setSortDir('desc'); }
             };
 
-            useEffect(() => { loadData(); }, []);
-
             const stats = useMemo(() => {
-                if (!data.length) return { avgChange: 0, upCount: 0, downCount: 0 };
-                let total = 0, up = 0, down = 0, n = 0;
+                if (!data.length) return { avgChange: 0, upCount: 0, downCount: 0, totalValue: 0 };
+                let total = 0, up = 0, down = 0, n = 0, totalVal = 0;
                 data.forEach(d => {
                     const p = parseFloat(d['涨跌幅']);
                     if (!isNaN(p)) { total += p; if (p > 0) up++; if (p < 0) down++; n++; }
+                    totalVal += (d.total_value || 0);
                 });
-                return { avgChange: n ? (total / n * 100).toFixed(2) : 0, upCount: up, downCount: down };
+                return {
+                    avgChange:  n ? (total / n * 100).toFixed(2) : 0,
+                    upCount:    up,
+                    downCount:  down,
+                    totalValue: totalVal,
+                };
             }, [data]);
 
             const processedData = useMemo(() => {
@@ -371,21 +539,28 @@
                         const va = RISK_ORDER[a['风险评级']] || 99, vb = RISK_ORDER[b['风险评级']] || 99;
                         return sortDir === 'desc' ? vb - va : va - vb;
                     }
+                    if (sortBy === '市值') {
+                        const va = a.total_value || 0, vb = b.total_value || 0;
+                        return sortDir === 'desc' ? vb - va : va - vb;
+                    }
                     const va = a[sortBy] || '', vb = b[sortBy] || '';
                     return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
                 });
 
                 if (groupBy === 'none') return [{ key: null, items: sorted }];
-
                 const groups = {};
                 sorted.forEach(f => { const k = f[groupBy] || '未知'; if (!groups[k]) groups[k] = []; groups[k].push(f); });
-
                 let keys = Object.keys(groups);
                 if (groupBy === '风险评级') keys.sort((a, b) => (RISK_ORDER[a] || 99) - (RISK_ORDER[b] || 99));
                 else keys.sort();
-
                 return keys.map(k => ({ key: k, items: groups[k] }));
             }, [data, sortBy, sortDir, groupBy]);
+
+            // 加载状态
+            if (!authChecked) return <div className="min-h-screen flex items-center justify-center text-gray-400 animate-pulse">加载中...</div>;
+
+            // 未登录
+            if (!user) return <LoginPage onLogin={handleLogin} />;
 
             return (
                 <div className="min-h-screen pb-12">
@@ -398,34 +573,32 @@
                                 </div>
                                 <div>
                                     <h1 className="font-bold text-xl text-gray-900 tracking-tight">基金追踪</h1>
-                                    <p className="text-xs text-gray-400">{IS_STATIC ? '只读预览' : '实时估值看板'}</p>
+                                    <p className="text-xs text-gray-400">{user.username} · 实时估值看板</p>
                                 </div>
                             </div>
                             <div className="flex gap-2 items-center">
                                 <button onClick={loadData} className="p-2 text-gray-500 hover:text-primary hover:bg-gray-50 rounded-lg transition-all" title="刷新估值">
                                     <IconRefresh spin={loading} />
                                 </button>
-                                {/* 以下按钮仅动态模式显示 */}
-                                {!IS_STATIC && (
-                                    <React.Fragment>
-                                        <button onClick={handleUpdateRiskLevels} disabled={updatingRisk}
-                                            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-xs font-medium transition-colors disabled:opacity-50"
-                                            title="批量补全风险评级">
-                                            <IconShield />
-                                            <span className="hidden sm:inline">{updatingRisk ? '获取中...' : '更新评级'}</span>
-                                        </button>
-                                        <button onClick={handleSync} disabled={syncing}
-                                            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-xs font-medium transition-colors disabled:opacity-50"
-                                            title="同步到维格表">
-                                            <IconCloud />
-                                            <span className="hidden sm:inline">{syncing ? '同步中...' : '同步'}</span>
-                                        </button>
-                                        <button onClick={() => setIsAddModalOpen(true)}
-                                            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium shadow-lg shadow-gray-200 transition-all">
-                                            <IconPlus /><span>添加</span>
-                                        </button>
-                                    </React.Fragment>
-                                )}
+                                <button onClick={handleUpdateRiskLevels} disabled={updatingRisk}
+                                    className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-xs font-medium transition-colors disabled:opacity-50"
+                                    title="批量补全风险评级">
+                                    <IconShield />
+                                    <span className="hidden sm:inline">{updatingRisk ? '更新中...' : '更新评级'}</span>
+                                </button>
+                                <button onClick={handleSync} disabled={syncing}
+                                    className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-xs font-medium transition-colors disabled:opacity-50"
+                                    title="同步到维格表">
+                                    <IconCloud />
+                                    <span className="hidden sm:inline">{syncing ? '同步中...' : '同步'}</span>
+                                </button>
+                                <button onClick={() => setIsAddModalOpen(true)}
+                                    className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium shadow-lg shadow-gray-200 transition-all">
+                                    <IconPlus /><span>添加</span>
+                                </button>
+                                <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all" title="退出登录">
+                                    <IconLogout />
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -433,18 +606,25 @@
                     {/* Main Content */}
                     <div className="max-w-4xl mx-auto px-4 py-4 sm:py-8">
                         {/* Stats */}
-                        <div className="grid grid-cols-3 gap-4 mb-6 sm:mb-8">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 sm:mb-8">
                             <StatCard label="平均涨跌" value={`${stats.avgChange > 0 ? '+' : ''}${stats.avgChange}%`} trend={parseFloat(stats.avgChange)} />
                             <StatCard label="上涨基金" value={stats.upCount} subValue="支" trend={1} />
                             <StatCard label="下跌基金" value={stats.downCount} subValue="支" trend={-1} />
+                            <StatCard
+                                label="总市值"
+                                value={stats.totalValue > 0
+                                    ? `¥${stats.totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                                    : '—'}
+                                trend={0}
+                            />
                         </div>
 
-                        {/* 排序 & 分组 — 横向滚动，不换行 */}
+                        {/* 排序 & 分组 */}
                         <div className="overflow-x-auto scroll-x -mx-4 px-4 mb-5 pb-1">
                             <div className="flex items-center gap-3 min-w-max">
                                 <div className="flex items-center gap-1.5">
                                     <span className="text-xs text-gray-400 font-medium">排序</span>
-                                    {['涨跌幅', '基金名称', '风险评级', '来源'].map(f => (
+                                    {['涨跌幅', '基金名称', '风险评级', '来源', '市值'].map(f => (
                                         <button key={f} onClick={() => toggleSort(f)}
                                             className={`flex items-center gap-0.5 text-xs px-2.5 py-1 rounded-full border transition-all ${sortBy === f ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'}`}>
                                             {f}{sortBy === f && <IconSort dir={sortDir} />}
@@ -479,7 +659,12 @@
                                             </div>
                                         )}
                                         {group.items.map(fund => (
-                                            <FundRow key={fund['基金代码']} fund={fund} onDelete={!IS_STATIC ? handleDelete : null} />
+                                            <FundRow
+                                                key={fund['基金代码']}
+                                                fund={fund}
+                                                onDelete={handleDelete}
+                                                onSharesChange={handleSharesChange}
+                                            />
                                         ))}
                                     </div>
                                 ))
@@ -488,19 +673,17 @@
                                     <div className="bg-white w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
                                         <span className="text-2xl">📭</span>
                                     </div>
-                                    <h3 className="text-gray-900 font-medium">暂无数据</h3>
-                                    <p className="text-gray-400 text-sm mt-1">{IS_STATIC ? '请检查网络连接或稍后重试' : '点击右上角添加按钮开始追踪'}</p>
+                                    <h3 className="text-gray-900 font-medium">暂无持仓</h3>
+                                    <p className="text-gray-400 text-sm mt-1">点击右上角添加按钮开始追踪</p>
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    {/* Modal（仅动态模式） */}
-                    {!IS_STATIC && (
-                        <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="添加新基金">
-                            <AddFundForm onClose={() => setIsAddModalOpen(false)} onRefresh={loadData} />
-                        </Modal>
-                    )}
+                    {/* 添加基金 Modal */}
+                    <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="添加新基金">
+                        <AddFundForm onClose={() => setIsAddModalOpen(false)} onRefresh={loadData} />
+                    </Modal>
                 </div>
             );
         };
