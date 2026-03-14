@@ -27,46 +27,12 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback } = React;
 
-        // ─── Token 管理 ────────────────────────────────────────────
-        const TOKEN_KEY = 'fund_access_token';
-        const REFRESH_KEY = 'fund_refresh_token';
-
-        const getToken = () => localStorage.getItem(TOKEN_KEY);
-        const setTokens = (access, refresh) => {
-            localStorage.setItem(TOKEN_KEY, access);
-            if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-        };
-        const clearTokens = () => {
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(REFRESH_KEY);
-        };
-
-        // 带 JWT 的 fetch 封装，自动刷新 token
-        const apiFetch = async (url, options = {}) => {
-            const token = getToken();
-            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-            if (token) headers['Authorization'] = `Bearer ${token}`;
-
-            let res = await fetch(url, { ...options, headers });
-
-            // token 过期时尝试刷新
-            if (res.status === 401) {
-                const refreshToken = localStorage.getItem(REFRESH_KEY);
-                if (refreshToken) {
-                    const rRes = await fetch('/api/auth/refresh', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${refreshToken}`, 'Content-Type': 'application/json' }
-                    });
-                    if (rRes.ok) {
-                        const rData = await rRes.json();
-                        setTokens(rData.access_token, null);
-                        headers['Authorization'] = `Bearer ${rData.access_token}`;
-                        res = await fetch(url, { ...options, headers });
-                    }
-                }
-            }
-            return res;
-        };
+        // ─── API 封装（Session Cookie，浏览器自动管理） ─────────────
+        const apiFetch = (url, options = {}) => fetch(url, {
+            ...options,
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+            credentials: 'same-origin',
+        });
 
         // 风险评级排序权重
         const RISK_ORDER = { 'R1 低风险': 1, 'R2 中低风险': 2, 'R3 中等风险': 3, 'R4 中高风险': 4, 'R5 高风险': 5 };
@@ -362,7 +328,6 @@
                     });
                     const data = await res.json();
                     if (data.success) {
-                        setTokens(data.access_token, data.refresh_token);
                         onLogin(data.user);
                     } else {
                         setError(data.message || '登录失败');
@@ -427,23 +392,18 @@
             const [sortDir, setSortDir]             = useState('desc');
             const [groupBy, setGroupBy]             = useState('none');
 
-            // 启动时检查已有 token
+            // 启动时检查是否已有 session
             useEffect(() => {
-                const token = getToken();
-                if (token) {
-                    apiFetch('/api/auth/me')
-                        .then(res => res.ok ? res.json() : null)
-                        .then(u => { if (u) setUser(u); })
-                        .finally(() => setAuthChecked(true));
-                } else {
-                    setAuthChecked(true);
-                }
+                apiFetch('/api/auth/me')
+                    .then(res => res.ok ? res.json() : null)
+                    .then(u => { if (u) setUser(u); })
+                    .finally(() => setAuthChecked(true));
             }, []);
 
             const handleLogin = (u) => setUser(u);
 
-            const handleLogout = () => {
-                clearTokens();
+            const handleLogout = async () => {
+                await apiFetch('/api/auth/logout', { method: 'POST' });
                 setUser(null);
                 setData([]);
             };

@@ -3,13 +3,14 @@ SQLAlchemy 数据模型
 """
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
+from flask_login import UserMixin
 from datetime import datetime
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
 
 
-class User(db.Model):
+class User(UserMixin, db.Model):
     __tablename__ = 'users'
 
     id            = db.Column(db.Integer, primary_key=True)
