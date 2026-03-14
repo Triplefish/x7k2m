@@ -1,11 +1,12 @@
-import { json, getUser, loadFunds, fetchFundgz, formatEstimate } from '../_shared/helpers.js';
+import { json, resolveUser, unauthorized, loadFunds, fetchFundgz, formatEstimate } from '../_shared/helpers.js';
 
 /**
- * GET /api/estimates?user=X
- * 并发拉取所有基金实时估值
+ * GET /api/estimates?token=X
+ * 并发拉取所有基金实时估值（含持仓份额）
  */
 export async function onRequestGet({ request, env }) {
-  const user = getUser(request);
+  const user = resolveUser(request, env);
+  if (!user) return unauthorized();
   const funds = await loadFunds(env, user);
 
   const results = await Promise.all(
@@ -18,6 +19,7 @@ export async function onRequestGet({ request, env }) {
           '来源': fund.source || '其他',
           '类型': fund.type || '',
           '风险评级': fund.risk_level || '',
+          '持仓份额': fund.shares || 0,
           '当前估值': '获取失败',
           '涨跌幅': '0',
           '涨跌额': '0',

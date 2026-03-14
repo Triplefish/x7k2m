@@ -1,18 +1,20 @@
-import { json, getUser, loadFunds, saveFunds } from '../_shared/helpers.js';
+import { json, resolveUser, unauthorized, loadFunds, saveFunds } from '../_shared/helpers.js';
 
 /**
- * GET /api/funds?user=X  — 返回用户基金列表
- * POST /api/funds?user=X — 添加基金
+ * GET /api/funds?token=X  — 返回用户基金列表
+ * POST /api/funds?token=X — 添加基金
  */
 
 export async function onRequestGet({ request, env }) {
-  const user = getUser(request);
+  const user = resolveUser(request, env);
+  if (!user) return unauthorized();
   const funds = await loadFunds(env, user);
   return json(funds);
 }
 
 export async function onRequestPost({ request, env }) {
-  const user = getUser(request);
+  const user = resolveUser(request, env);
+  if (!user) return unauthorized();
   const data = await request.json();
 
   if (!data.code) return json({ success: false, message: '缺少基金代码' }, 400);

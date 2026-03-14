@@ -50,6 +50,7 @@ export function formatEstimate(fund, raw) {
     '来源': fund.source || '其他',
     '类型': typeLabel,
     '风险评级': fund.risk_level || '',
+    '持仓份额': fund.shares || 0,
     '昨日净值': latestNav.toFixed(4),
     '当前估值': estimateNav.toFixed(4),
     '涨跌幅': changePct.toFixed(6),
@@ -91,10 +92,21 @@ export function json(data, status = 200) {
 }
 
 /**
- * 解析 URL 中的 user 参数，默认 user1
+ * 从 URL token 参数解析用户身份
+ * 环境变量: TOKEN_USER1, TOKEN_USER2, TOKEN_USER3 ...
+ * 返回 null 表示无效令牌
  */
-export function getUser(request) {
-  return new URL(request.url).searchParams.get('user') || 'user1';
+export function resolveUser(request, env) {
+  const token = new URL(request.url).searchParams.get('token') || '';
+  if (!token) return null;
+  if (env.TOKEN_USER1 && env.TOKEN_USER1 === token) return 'user1';
+  if (env.TOKEN_USER2 && env.TOKEN_USER2 === token) return 'user2';
+  if (env.TOKEN_USER3 && env.TOKEN_USER3 === token) return 'user3';
+  return null;
+}
+
+export function unauthorized() {
+  return json({ success: false, message: '无效的访问令牌' }, 401);
 }
 
 /**

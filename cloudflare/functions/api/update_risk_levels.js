@@ -1,11 +1,12 @@
-import { json, getUser, loadFunds, saveFunds, fetchRiskLevel } from '../_shared/helpers.js';
+import { json, resolveUser, unauthorized, loadFunds, saveFunds, fetchRiskLevel } from '../_shared/helpers.js';
 
 /**
- * POST /api/update_risk_levels?user=X
+ * POST /api/update_risk_levels?token=X
  * 批量为缺少风险评级的基金抓取并回写 KV
  */
 export async function onRequestPost({ request, env }) {
-  const user = getUser(request);
+  const user = resolveUser(request, env);
+  if (!user) return unauthorized();
   const funds = await loadFunds(env, user);
 
   let updated = 0;

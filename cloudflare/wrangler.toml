@@ -3,11 +3,20 @@ pages_build_output_dir = "public"
 compatibility_date = "2024-01-01"
 
 # KV 命名空间绑定
-# 在 Cloudflare Dashboard 创建 KV namespace 后，把 id 填入下方
-# 或执行: wrangler kv:namespace create FUND_KV
+# 执行: wrangler kv namespace create FUND_KV
+# 把生成的 id 填到下方
 [[kv_namespaces]]
 binding = "FUND_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "d1564fa76023448fb0ad28eef5a8250f"  # 把这里替换掉
 
-# 本地开发时使用预览 KV
-# preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
+# ─── 用户 Token 配置 ──────────────────────────────────────────
+# 通过环境变量配置每个用户的访问令牌，不要写在这里！
+# 在 Cloudflare Dashboard → Pages → 你的项目 → Settings → Environment variables 里设置：
+#   TOKEN_USER1 = 给第一个人的随机字符串（如 abc123xyz）
+#   TOKEN_USER2 = 给第二个人的随机字符串
+#   TOKEN_USER3 = 给第三个人的随机字符串（可选）
+#
+# 或者用命令行：
+#   wrangler pages secret put TOKEN_USER1
+#
+# 访问方式：https://你的域名.pages.dev/?token=abc123xyz
