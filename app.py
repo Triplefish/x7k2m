@@ -1,9 +1,12 @@
 """
 基金追踪器后端 - 数据库版
-使用 Flask + SQLAlchemy + Flask-Login (Session) 认证
+使用 Flask + SQLAlchemy + JWT 认证
 """
 from flask import Flask, render_template, request, jsonify
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_jwt_extended import (
+    JWTManager, create_access_token, create_refresh_token,
+    jwt_required, get_jwt_identity
+)
 from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -20,30 +23,20 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
     'DATABASE_URL', 'sqlite:///fund_tracker.db'
 ).replace('postgres://', 'postgresql://')  # Railway 兼容
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-me-in-production')
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'change-me-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES']  = timedelta(minutes=30)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
 
 # ─── 扩展初始化 ────────────────────────────────────────────────────
 db.init_app(app)
 bcrypt.init_app(app)
+jwt = JWTManager(app)
 migrate = Migrate(app, db)
-login_manager = LoginManager(app)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per minute"]
 )
-
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
-
-
-@login_manager.unauthorized_handler
-def unauthorized():
-    return jsonify({'success': False, 'message': '未登录'}), 401
-
 
 # ─── 辅助函数 ──────────────────────────────────────────────────────
 def _sync_vika_background(results):
@@ -83,30 +76,40 @@ def login():
     if not user or not user.check_password(password):
         return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
 
-    login_user(user, remember=True)
-    return jsonify({'success': True, 'user': user.to_dict()})
+    access_token  = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+    return jsonify({
+        'success':       True,
+        'access_token':  access_token,
+        'refresh_token': refresh_token,
+        'user':          user.to_dict()
+    })
 
 
-@app.route('/api/auth/logout', methods=['POST'])
-@login_required
-def logout():
-    logout_user()
-    return jsonify({'success': True})
+@app.route('/api/auth/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    user_id = get_jwt_identity()
+    access_token = create_access_token(identity=user_id)
+    return jsonify({'access_token': access_token})
 
 
 @app.route('/api/auth/me', methods=['GET'])
-@login_required
+@jwt_required()
 def me():
-    return jsonify(current_user.to_dict())
+    user_id = int(get_jwt_identity())
+    user = User.query.get_or_404(user_id)
+    return jsonify(user.to_dict())
 
 
 # ─── 基金管理端点 ───────────────────────────────────────────────────
 @app.route('/api/funds', methods=['GET'])
-@login_required
+@jwt_required()
 def get_funds():
+    user_id = int(get_jwt_identity())
     holdings = (
         UserFund.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=user_id)
         .join(Fund)
         .all()
     )
@@ -114,8 +117,9 @@ def get_funds():
 
 
 @app.route('/api/funds', methods=['POST'])
-@login_required
+@jwt_required()
 def add_fund():
+    user_id = int(get_jwt_identity())
     data = request.get_json() or {}
 
     code = data.get('code', '').strip()
@@ -123,7 +127,7 @@ def add_fund():
         return jsonify({'success': False, 'message': '基金代码必须是6位数字'}), 400
 
     # 检查是否已持有
-    existing = UserFund.query.filter_by(user_id=current_user.id, fund_code=code).first()
+    existing = UserFund.query.filter_by(user_id=user_id, fund_code=code).first()
     if existing:
         return jsonify({'success': False, 'message': '已在持仓中'}), 400
 
@@ -140,6 +144,7 @@ def add_fund():
         )
         db.session.add(fund)
     else:
+        # 有新信息时更新缓存
         if data.get('name'):
             fund.name = data['name']
         if data.get('risk_level'):
@@ -154,7 +159,7 @@ def add_fund():
         shares = 0
 
     holding = UserFund(
-        user_id=current_user.id,
+        user_id=user_id,
         fund_code=code,
         source=data.get('source', '其他'),
         shares=shares,
@@ -164,17 +169,19 @@ def add_fund():
     db.session.commit()
 
     # 后台补全风险评级
-    t = threading.Thread(target=_refresh_risk_levels_background, args=(current_user.id,), daemon=True)
+    t = threading.Thread(target=_refresh_risk_levels_background, args=(user_id,), daemon=True)
     t.start()
 
     return jsonify({'success': True})
 
 
 @app.route('/api/funds/<string:code>', methods=['PUT'])
-@login_required
+@jwt_required()
 def update_fund(code):
     """更新持仓信息（份额、来源、成本）"""
-    holding = UserFund.query.filter_by(user_id=current_user.id, fund_code=code).first_or_404()
+    user_id = int(get_jwt_identity())
+    holding = UserFund.query.filter_by(user_id=user_id, fund_code=code).first_or_404()
+
     data = request.get_json() or {}
 
     if 'shares' in data:
@@ -198,9 +205,10 @@ def update_fund(code):
 
 
 @app.route('/api/funds/<string:code>', methods=['DELETE'])
-@login_required
+@jwt_required()
 def delete_fund(code):
-    holding = UserFund.query.filter_by(user_id=current_user.id, fund_code=code).first_or_404()
+    user_id = int(get_jwt_identity())
+    holding = UserFund.query.filter_by(user_id=user_id, fund_code=code).first_or_404()
     db.session.delete(holding)
     db.session.commit()
     return jsonify({'success': True})
@@ -208,9 +216,10 @@ def delete_fund(code):
 
 # ─── 估值端点 ───────────────────────────────────────────────────────
 @app.route('/api/estimates', methods=['GET'])
-@login_required
+@jwt_required()
 def get_estimates():
-    holdings = UserFund.query.filter_by(user_id=current_user.id).join(Fund).all()
+    user_id = int(get_jwt_identity())
+    holdings = UserFund.query.filter_by(user_id=user_id).join(Fund).all()
 
     results = []
     for uf in holdings:
@@ -218,6 +227,7 @@ def get_estimates():
         try:
             res = fund_tracker.calculate_fund_estimate(fund_dict)
             if res:
+                # 注入份额和市值
                 shares = float(uf.shares) if uf.shares else 0
                 res['shares'] = shares
                 if shares > 0:
@@ -231,7 +241,7 @@ def get_estimates():
                 results.append(res)
             else:
                 results.append({
-                    '基金名称': fund_dict.get('name', uf.fund_code),
+                    '基金名称': fund_dict.get('name', code),
                     '基金代码': uf.fund_code,
                     '当前估值': '获取失败',
                     '涨跌幅': '0',
@@ -252,7 +262,7 @@ def get_estimates():
                 'error': str(e),
             })
 
-    # 后台同步维格表
+    # 后台同步维格表（可选，保留兼容）
     if results:
         t = threading.Thread(target=_sync_vika_background, args=(results,), daemon=True)
         t.start()
@@ -279,17 +289,19 @@ def get_fund_info(code):
 
 
 @app.route('/api/update_risk_levels', methods=['POST'])
-@login_required
+@jwt_required()
 def update_risk_levels():
-    t = threading.Thread(target=_refresh_risk_levels_background, args=(current_user.id,), daemon=True)
+    user_id = int(get_jwt_identity())
+    t = threading.Thread(target=_refresh_risk_levels_background, args=(user_id,), daemon=True)
     t.start()
     return jsonify({'success': True, 'message': '已在后台开始更新，刷新估值后生效'})
 
 
 @app.route('/api/sync', methods=['POST'])
-@login_required
+@jwt_required()
 def sync_vika():
-    holdings = UserFund.query.filter_by(user_id=current_user.id).join(Fund).all()
+    user_id = int(get_jwt_identity())
+    holdings = UserFund.query.filter_by(user_id=user_id).join(Fund).all()
     results = []
     for uf in holdings:
         res = fund_tracker.calculate_fund_estimate(uf.to_dict())
